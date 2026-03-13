@@ -1,0 +1,92 @@
+name: Deploy Frontend to VirtualBox
+
+on:
+  push:
+    branches: [ main, dev ]
+    paths:
+      - 'frontend/**'
+      - 'nginx/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Install SSH key
+      uses: shimataro/ssh-key-action@v2
+      with:
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        known_hosts: ${{ secrets.SERVER_IP }}
+        
+    - name: Add known hosts
+      run: |
+        mkdir -p ~/.ssh
+        ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+    
+    - name: Create project directories
+      run: |
+        ssh ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "
+          # Создаем структуру папок проекта
+          mkdir -p ~/LureGenix/frontend/css
+          mkdir -p ~/LureGenix/frontend/js
+          mkdir -p ~/LureGenix/nginx
+          mkdir -p ~/LureGenix/logs
+          
+          echo '✅ Папки созданы'
+        "
+    
+    - name: Copy nginx config
+      run: |
+        # Копируем конфиг nginx
+        scp nginx/default.conf ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }}:~/LureGenix/nginx/
+        
+        # Устанавливаем конфиг в системную папку nginx
+        ssh ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "
+          sudo cp ~/LureGenix/nginx/default.conf /etc/nginx/sites-available/LureGenix
+          sudo ln -sf /etc/nginx/sites-available/LureGenix /etc/nginx/sites-enabled/
+          sudo nginx -t && sudo systemctl reload nginx
+          echo '✅ nginx настроен'
+        "
+    
+    - name: Copy frontend files
+      run: |
+        # Копируем все файлы фронтенда
+        scp frontend/index.html ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }}:~/LureGenix/frontend/
+        scp frontend/css/* ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }}:~/LureGenix/frontend/css/ 2>/dev/null || true
+        scp frontend/js/* ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }}:~/LureGenix/frontend/js/ 2>/dev/null || true
+        
+        # Создаем файл с информацией о деплое
+        ssh ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "
+          echo '{
+            \"branch\": \"${{ github.ref_name }}\",
+            \"commit\": \"${{ github.sha }}\",
+            \"deployed_at\": \"$(date)\"
+          }' > ~/LureGenix/frontend/deploy-info.json
+          
+          echo '✅ Фронтенд скопирован'
+        "
+    
+    - name: Set permissions
+      run: |
+        ssh ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "
+          sudo chown -R www-data:www-data ~/LureGenix/frontend
+          sudo chmod -R 755 ~/LureGenix/frontend
+          echo '✅ Права установлены'
+        "
+    
+    - name: Verify deployment
+      run: |
+        ssh ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "
+          echo '📁 Содержимое проекта:'
+          ls -la ~/LureGenix/frontend/
+          
+          echo -e '\n🌐 Проверка nginx:'
+          sudo nginx -t
+          
+          echo -e '\n📄 Информация о деплое:'
+          cat ~/LureGenix/frontend/deploy-info.json
+        "

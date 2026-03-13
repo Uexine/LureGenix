@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Мой фронтенд проект</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Мой фронтенд проект</h1>
+        
+        <div class="card">
+            <h2>Статус деплоя</h2>
+            <div class="info" id="deploy-info">
+                <p>Загрузка информации...</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Тестовая страница</h2>
+            <p>Если вы это видите, значит:</p>
+            <ul>
+                <li>✅ Файлы скопированы на сервер</li>
+                <li>✅ nginx настроен правильно</li>
+                <li>✅ CI/CD работает</li>
+            </ul>
+            <button onclick="testConnection()" class="button">Проверить соединение</button>
+            <p id="test-result"></p>
+        </div>
+
+        <div class="card">
+            <h2>Информация</h2>
+            <p><strong>Путь на сервере:</strong> ~/LureGenix/frontend</p>
+            <p><strong>Версия:</strong> <span id="version">1.0.0</span></p>
+            <p><strong>Ветка:</strong> <span id="branch">main</span></p>
+            <p><strong>Последний деплой:</strong> <span id="timestamp"></span></p>
+        </div>
+
+        <div class="footer">
+            <p>Автоматический деплой через GitHub Actions</p>
+        </div>
+    </div>
+    <script src="js/main.js"></script>
+</body>
+</html>
