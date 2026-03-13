@@ -13,43 +13,45 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
       
-    - name: Install SSH key
-      uses: shimataro/ssh-key-action@v2
-      with:
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        known_hosts: ${{ secrets.SERVER_IP }}
-        
-    - name: Add known hosts
-      run: |
-        mkdir -p ~/.ssh
-        ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+    - name: Install sshpass
+      run: sudo apt-get update && sudo apt-get install -y sshpass
     
-    - name: Copy project to server
+    - name: Create project directory on server
       run: |
-        # Создаем папку проекта на сервере
-        ssh ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "mkdir -p ~/LureGenix"
-        
-        # Копируем весь проект (кроме .git)
-        rsync -avz --delete --exclude '.git' ./ ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }}:~/LureGenix/
+        sshpass -p '${{ secrets.SERVER_PASSWORD }}' ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "mkdir -p ~/LureGenix"
+    
+    - name: Copy project files
+      run: |
+        sshpass -p '${{ secrets.SERVER_PASSWORD }}' scp -r -o StrictHostKeyChecking=no \
+          .github \
+          frontend \
+          nginx \
+          docker-compose.yml \
+          ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }}:~/LureGenix/
     
     - name: Deploy with Docker
       run: |
-        ssh ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "
+        sshpass -p '${{ secrets.SERVER_PASSWORD }}' ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "
           cd ~/LureGenix
+          echo '🐳 Запускаем Docker...'
           
-          # Останавливаем старый контейнер если есть
-          docker-compose down || true
+          # Останавливаем старые контейнеры
+          docker-compose down 2>/dev/null || true
           
-          # Запускаем новый
+          # Запускаем новые
           docker-compose up -d --build
           
           # Проверяем статус
+          echo '📊 Статус контейнеров:'
           docker-compose ps
+          
+          # Проверяем что сайт отвечает
+          echo '🌐 Проверка сайта:'
+          sleep 3
+          curl -f http://localhost:8080/health || echo '⚠️ Сайт пока не отвечает'
         "
     
-    - name: Health check
+    - name: Show access info
       run: |
-        sleep 5
-        ssh ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "
-          curl -f http://localhost:8080/health || echo 'Health check failed'
-        "
+        echo "✅ Деплой завершен!"
+        echo "🌐 Сайт доступен по адресу: http://${{ secrets.SERVER_IP }}:8080"
