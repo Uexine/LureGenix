@@ -2,53 +2,33 @@ import os
 import time
 import requests
 
-SERVER="http://gateway:8000"
+SERVER = "http://gateway:8000"
 
-WATCH_DIR="/tmp"
+WATCH = "/tmp/passwords.txt"
 
-files={}
+last = None
 
-
-def scan():
-
-    for root,dirs,fs in os.walk(WATCH_DIR):
-
-        for f in fs:
-
-            path=os.path.join(root,f)
-
-            files[path]=os.stat(path).st_atime
+if os.path.exists(WATCH):
+    last = os.stat(WATCH).st_atime
 
 
-def monitor():
+while True:
 
-    while True:
+    if os.path.exists(WATCH):
 
-        for f,last in files.items():
+        new = os.stat(WATCH).st_atime
 
-            try:
+        if last and new != last:
 
-                new=os.stat(f).st_atime
+            requests.post(
+                SERVER + "/event",
+                json={
+                    "token_id": 1,
+                    "action": "file_opened",
+                    "file": WATCH
+                }
+            )
 
-                if new!=last:
+        last = new
 
-                    requests.post(
-                        SERVER+"/event",
-                        json={
-                            "node_id":1,
-                            "token_id":1,
-                            "action":"file_opened",
-                            "file":f
-                        }
-                    )
-
-                    files[f]=new
-
-            except:
-                pass
-
-        time.sleep(2)
-
-
-scan()
-monitor()
+    time.sleep(3)
