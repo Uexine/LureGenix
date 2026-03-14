@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 import os
 from datetime import datetime, timedelta
-import jwt
+from jose import jwt  # это правильный импорт для python-jose
 
 app = FastAPI()
 
