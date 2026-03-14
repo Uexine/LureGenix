@@ -17,18 +17,40 @@ jobs:
       with:
         ssh-private-key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
     
-    - name: Disable host key checking (проще некуда)
+    - name: Disable host key checking
       run: |
         mkdir -p ~/.ssh
         echo -e "Host *\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile /dev/null" > ~/.ssh/config
     
-    - name: Deploy
+    - name: Deploy via bore tunnel
       run: |
-        # Важно: используем порт 2222
-        ssh -p 2223 ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "
+        ssh -p 2223 ${{ secrets.SERVER_USERNAME }}@bore.pub "
           cd ~/LureGenix
-          git pull origin ${{ github.ref_name }}
-          docker-compose down
+          
+          # Создаем директорию если нет
+          mkdir -p ~/LureGenix
+          cd ~/LureGenix
+          
+          # Клонируем если репозитория нет
+          if [ ! -d .git ]; then
+            git clone https://github.com/${{ github.repository }}.git .
+          fi
+          
+          # Обновляем код
+          git fetch origin
+          git reset --hard origin/${{ github.ref_name }}
+          
+          # Деплой
+          docker-compose down --remove-orphans 2>/dev/null || true
           docker-compose up -d --build
+          
+          # Проверка
           echo '✅ Деплой готов!'
+          echo '🌐 Сайт доступен локально: http://10.124.21.50:8080'
         "
+    
+    - name: Show deployment info
+      run: |
+        echo "✅ Деплой завершен!"
+        echo "📝 Ветка: ${{ github.ref_name }}"
+        echo "🔄 Коммит: ${{ github.sha }}"
