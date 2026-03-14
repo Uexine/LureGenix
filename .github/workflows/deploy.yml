@@ -13,30 +13,46 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
       
-    - name: Install sshpass
-      run: sudo apt-get update && sudo apt-get install -y sshpass
+    - name: Setup SSH
+      uses: webfactory/ssh-agent@v0.7.0
+      with:
+        ssh-private-key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
+    
+    - name: Add server to known_hosts
+      run: |
+        mkdir -p ~/.ssh
+        ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+    
+    - name: Test SSH connection
+      run: |
+        ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "echo '✅ SSH connection successful'"
     
     - name: Create project directory on server
       run: |
-        sshpass -p '${{ secrets.SERVER_PASSWORD }}' ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "mkdir -p ~/LureGenix"
+        ssh ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "mkdir -p ~/LureGenix"
     
-    - name: Copy project files
+    - name: Copy project files using rsync
       run: |
-        sshpass -p '${{ secrets.SERVER_PASSWORD }}' scp -r -o StrictHostKeyChecking=no \
-          .github \
-          frontend \
-          nginx \
-          docker-compose.yml \
+        rsync -avz --delete \
+          --exclude '.git' \
+          --exclude '.github' \
+          --exclude 'node_modules' \
+          --exclude '.env' \
+          ./ \
           ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }}:~/LureGenix/
     
     - name: Deploy with Docker
       run: |
-        sshpass -p '${{ secrets.SERVER_PASSWORD }}' ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "
+        ssh ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "
           cd ~/LureGenix
+          
           echo '🐳 Запускаем Docker...'
           
+          # Создаем .env файл если нужно (опционально)
+          # echo \"API_KEY=${{ secrets.API_KEY }}\" > .env
+          
           # Останавливаем старые контейнеры
-          docker-compose down 2>/dev/null || true
+          docker-compose down --remove-orphans 2>/dev/null || true
           
           # Запускаем новые
           docker-compose up -d --build
@@ -47,11 +63,19 @@ jobs:
           
           # Проверяем что сайт отвечает
           echo '🌐 Проверка сайта:'
-          sleep 3
+          sleep 5
           curl -f http://localhost:8080/health || echo '⚠️ Сайт пока не отвечает'
         "
+    
+    - name: Health check
+      run: |
+        sleep 10
+        curl -f http://${{ secrets.SERVER_IP }}:8080/health && echo "✅ Health check passed" || echo "⚠️ Health check failed"
     
     - name: Show access info
       run: |
         echo "✅ Деплой завершен!"
         echo "🌐 Сайт доступен по адресу: http://${{ secrets.SERVER_IP }}:8080"
+        echo "📝 Ветка: ${{ github.ref_name }}"
+        echo "🔄 Коммит: ${{ github.sha }}"
+        echo "👤 Автор: ${{ github.actor }}"
