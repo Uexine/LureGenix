@@ -6,6 +6,6 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ./frontend:/usr/share/nginx/html  # Монтируем папку frontend
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf  # если есть конфиг
+      - ./frontend:/usr/share/nginx/html
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
     restart: unless-stopped
