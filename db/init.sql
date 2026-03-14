@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS events(
 );
 
 -- Добавим тестового пользователя
-INSERT INTO admins(username, password_hash) 
-VALUES('admin', 'not_used') 
-ON CONFLICT (username) DO NOTHING;
+INSERT INTO admins(username,password_hash)
+VALUES(
+'admin',
+'$2b$12$uCwS7Yq3Ck9nJxW7CqkB4e6qC7s0yS6L3vV9YdYF3x0V4vJ3p1yqK'
+)
+ON CONFLICT DO NOTHING;

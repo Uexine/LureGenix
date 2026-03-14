@@ -1,24 +1,47 @@
 from fastapi import FastAPI, HTTPException
+from passlib.context import CryptContext
+from jose import jwt
+import psycopg2
 import os
-from datetime import datetime, timedelta
-from jose import jwt  # это правильный импорт для python-jose
 
 app = FastAPI()
 
-SECRET = os.getenv("JWT_SECRET", "temp_secret_key_for_testing")
+SECRET = os.getenv("JWT_SECRET", "secret")
+
+pwd = CryptContext(schemes=["bcrypt"])
+
+def db():
+
+    return psycopg2.connect(
+        host="postgres",
+        database="luregenix",
+        user=os.getenv("POSTGRES_USER"),
+        password=os.getenv("POSTGRES_PASSWORD")
+    )
 
 @app.post("/login")
 def login(data: dict):
-    username = data.get("username")
-    
-    if not username:
-        raise HTTPException(status_code=400, detail="Username required")
-    
-    # ВСЕГДА пропускаем, любой пароль
+
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT password_hash FROM admins WHERE username=%s",
+        (data["username"],)
+    )
+
+    row = cur.fetchone()
+
+    if not row:
+        raise HTTPException(401,"Invalid login")
+
+    if not pwd.verify(data["password"], row[0]):
+        raise HTTPException(401,"Invalid login")
+
     token = jwt.encode(
-        {"user": username, "exp": datetime.utcnow() + timedelta(days=1)},
+        {"user":data["username"]},
         SECRET,
         algorithm="HS256"
     )
-    
-    return {"token": token}
+
+    return {"token":token}
