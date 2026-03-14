@@ -1,7 +1,79 @@
-<h1>LureGenix Dashboard</h1>
+<!DOCTYPE html>
+<html>
 
-<button onclick="create()">Create honeytoken</button>
+<head>
 
-<div id="alerts"></div>
+<title>LureGenix SOC</title>
 
-<script src="app.js"></script>
+<link rel="stylesheet" href="/css/style.css">
+
+</head>
+
+<body>
+
+<header>
+
+LureGenix Honeypot Platform
+
+</header>
+
+<div class="container">
+
+<div class="card">
+
+<h2>Network Nodes</h2>
+
+<table id="nodes">
+<tr>
+<th>ID</th>
+<th>Hostname</th>
+<th>IP</th>
+</tr>
+</table>
+
+</div>
+
+<div class="card">
+
+<h2>Honeytokens</h2>
+
+<table id="tokens">
+<tr>
+<th>ID</th>
+<th>Node</th>
+<th>Type</th>
+</tr>
+</table>
+
+</div>
+
+<div class="card">
+
+<h2>Create Honeytoken</h2>
+
+<select id="node"></select>
+
+<select id="type">
+<option>pdf</option>
+<option>docx</option>
+<option>ssh_key</option>
+</select>
+
+<button onclick="generate()">Generate</button>
+
+</div>
+
+<div class="card">
+
+<h2>Security Events</h2>
+
+<ul id="events"></ul>
+
+</div>
+
+</div>
+
+<script src="/js/dashboard.js"></script>
+
+</body>
+</html>
