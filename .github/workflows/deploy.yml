@@ -3,7 +3,6 @@ name: Deploy to VirtualBox
 on:
   push:
     branches: [ dev, main ]
-  workflow_dispatch:
 
 jobs:
   deploy:
@@ -18,64 +17,18 @@ jobs:
       with:
         ssh-private-key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
     
-    - name: Add server to known_hosts
+    - name: Disable host key checking (проще некуда)
       run: |
         mkdir -p ~/.ssh
-        ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+        echo -e "Host *\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile /dev/null" > ~/.ssh/config
     
-    - name: Test SSH connection
+    - name: Deploy
       run: |
-        ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "echo '✅ SSH connection successful'"
-    
-    - name: Create project directory on server
-      run: |
-        ssh ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "mkdir -p ~/LureGenix"
-    
-    - name: Copy project files using rsync
-      run: |
-        rsync -avz --delete \
-          --exclude '.git' \
-          --exclude '.github' \
-          --exclude 'node_modules' \
-          --exclude '.env' \
-          ./ \
-          ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }}:~/LureGenix/
-    
-    - name: Deploy with Docker
-      run: |
-        ssh ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "
+        # Важно: используем порт 2222
+        ssh -p 2223 ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_IP }} "
           cd ~/LureGenix
-          
-          echo '🐳 Запускаем Docker...'
-          
-          # Создаем .env файл если нужно (опционально)
-          # echo \"API_KEY=${{ secrets.API_KEY }}\" > .env
-          
-          # Останавливаем старые контейнеры
-          docker-compose down --remove-orphans 2>/dev/null || true
-          
-          # Запускаем новые
+          git pull origin ${{ github.ref_name }}
+          docker-compose down
           docker-compose up -d --build
-          
-          # Проверяем статус
-          echo '📊 Статус контейнеров:'
-          docker-compose ps
-          
-          # Проверяем что сайт отвечает
-          echo '🌐 Проверка сайта:'
-          sleep 5
-          curl -f http://localhost:8080/health || echo '⚠️ Сайт пока не отвечает'
+          echo '✅ Деплой готов!'
         "
-    
-    - name: Health check
-      run: |
-        sleep 10
-        curl -f http://${{ secrets.SERVER_IP }}:8080/health && echo "✅ Health check passed" || echo "⚠️ Health check failed"
-    
-    - name: Show access info
-      run: |
-        echo "✅ Деплой завершен!"
-        echo "🌐 Сайт доступен по адресу: http://${{ secrets.SERVER_IP }}:8080"
-        echo "📝 Ветка: ${{ github.ref_name }}"
-        echo "🔄 Коммит: ${{ github.sha }}"
-        echo "👤 Автор: ${{ github.actor }}"
