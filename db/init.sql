@@ -20,7 +20,5 @@ CREATE TABLE events(
     created_at TIMESTAMP DEFAULT now()
 );
 
--- Пароль admin (хеш bcrypt для "admin") – сгенерирован заново для гарантии
--- Хеш: $2b$12$8w2F3Yg4K5h6J7k8L9m0n1O2p3Q4r5S6t7U8v9W0x1Y2z3A4B5C6D7E8F
 INSERT INTO admins(username, password_hash)
-VALUES('admin', '$2b$12$8w2F3Yg4K5h6J7k8L9m0n1O2p3Q4r5S6t7U8v9W0x1Y2z3A4B5C6D7E8F');
+VALUES('admin', '$2b$12$lG0bY9z3kLp5qR7sT8uVwXyZ2aB4cD6eF8hJ1kM3nP5qR7sT9uVwX');
