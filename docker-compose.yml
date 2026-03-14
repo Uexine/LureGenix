@@ -1,11 +1,10 @@
 services:
-
   postgres:
-    image: postgres:15
+    image: postgres:18  # Обновил до актуальной
     environment:
-      POSTGRES_DB: luregenix
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: ${DB_NAME:-luregenix}
+      POSTGRES_USER: ${DB_USER:-admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-admin}
     volumes:
       - ./db:/docker-entrypoint-initdb.d
     ports:
@@ -15,11 +14,14 @@ services:
     build: ./services/auth_service
     depends_on:
       - postgres
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
 
   honeytoken_service:
     build: ./services/honeytoken_service
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./tokens:/tokens  # Добавил volume для persistence токенов
 
   event_service:
     build: ./services/event_service
@@ -34,6 +36,8 @@ services:
       - event_service
     ports:
       - "8000:8000"
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
 
   agent:
     build: ./agent
@@ -41,7 +45,7 @@ services:
       - gateway
 
   nginx:
-    image: nginx:alpine
+    image: nginx:alpine3.19  # Обновил
     ports:
       - "8080:80"
     volumes:
