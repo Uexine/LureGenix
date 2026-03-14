@@ -23,5 +23,5 @@ CREATE TABLE events(
 INSERT INTO admins(username,password_hash)
 VALUES(
 'admin',
-'$2b$12$KIXQ4s0M4s4c9l9b7y6vYONuXz3iU0nW7SgqkVvY2Yp7V4YkM4q8y'
+'$2b$12$KbQi8PpJk8u7kQhZQWz6EuHcQkW1jX7r2p1gC4Fz2r1K3m8zqG0i2'
 );
