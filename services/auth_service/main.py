@@ -20,16 +20,33 @@ def get_db():
 
 @app.post("/login")
 def login(data: dict):
+
+    username = data.get("username")
+    password = data.get("password")
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Missing credentials")
+
     conn = get_db()
     cur = conn.cursor()
+
     cur.execute(
         "SELECT password_hash FROM admins WHERE username=%s",
-        (data["username"],)
+        (username,)
     )
+
     row = cur.fetchone()
-    if not row or not pwd_context.verify(data["password"], row[0]):
+
+    if not row or not pwd_context.verify(password, row[0]):
         raise HTTPException(status_code=401, detail="Invalid login")
-    token = jwt.encode({"user": data["username"]}, SECRET, algorithm="HS256")
+
+    token = jwt.encode(
+        {"user": username},
+        SECRET,
+        algorithm="HS256"
+    )
+
     cur.close()
     conn.close()
+
     return {"token": token}
