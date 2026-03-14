@@ -6,7 +6,8 @@ from generator import generate_env, generate_passwords
 
 app = FastAPI()
 
-client = Groq(api_key=os.getenv("GROK_API_KEY"))
+api_key = os.getenv("GROK_API_KEY")
+client = Groq(api_key=api_key) if api_key else None
 
 @app.post("/generate")
 def generate(data: dict):
@@ -21,13 +22,16 @@ def generate(data: dict):
     else:
         content = generate_passwords()
 
-    if file_type in ["pdf", "docx"]:
-        prompt = f"Generate realistic fake document content for honeytoken, type: {file_type}"
-        response = client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="grok-beta",
-        )
-        content = response.choices[0].message.content
+    if client and file_type in ["pdf", "docx"]:
+        try:
+            prompt = f"Generate realistic fake document content for honeytoken, type: {file_type}"
+            response = client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model="grok-beta",
+            )
+            content = response.choices[0].message.content
+        except:
+            content = "Dummy content (no API key)"
 
     filename = f"{file_type}_{token_id}.{file_type}"
     path = f"/tokens/{filename}"
