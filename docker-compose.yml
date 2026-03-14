@@ -14,6 +14,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - luregenix
 
   auth_service:
     build: ./services/auth_service
@@ -27,6 +29,8 @@ services:
       - DB_PASSWORD=${DB_PASSWORD}
       - JWT_SECRET=${JWT_SECRET}
     command: uvicorn main:app --host 0.0.0.0 --port 8000
+    networks:
+      - luregenix
 
   honeytoken_service:
     build: ./services/honeytoken_service
@@ -36,6 +40,8 @@ services:
     environment:
       - GROK_API_KEY=${GROK_API_KEY}
     command: uvicorn main:app --host 0.0.0.0 --port 8000
+    networks:
+      - luregenix
 
   event_service:
     build: ./services/event_service
@@ -48,23 +54,32 @@ services:
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
     command: uvicorn main:app --host 0.0.0.0 --port 8000
+    networks:
+      - luregenix
 
   gateway:
     build: ./gateway
     depends_on:
-      - auth_service
-      - honeytoken_service
-      - event_service
+      auth_service:
+        condition: service_started
+      honeytoken_service:
+        condition: service_started
+      event_service:
+        condition: service_started
     ports:
       - "8000:8000"
     environment:
       - JWT_SECRET=${JWT_SECRET}
     command: uvicorn main:app --host 0.0.0.0 --port 8000
+    networks:
+      - luregenix
 
   agent:
     build: ./agent
     depends_on:
       - gateway
+    networks:
+      - luregenix
 
   nginx:
     image: nginx:alpine3.20
@@ -75,3 +90,9 @@ services:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
     depends_on:
       - gateway
+    networks:
+      - luregenix
+
+networks:
+  luregenix:
+    driver: bridge

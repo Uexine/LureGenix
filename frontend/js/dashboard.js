@@ -1,16 +1,17 @@
-if(!localStorage.getItem("token")){
-    window.location="/";
+if (!localStorage.getItem("token")) {
+    window.location = "/";
 }
 
 const token = localStorage.getItem("token");
 
-async function loadNodes(){
+async function loadNodes() {
     try {
         let r = await fetch("/api/nodes", {
-            headers: {"Authorization": `Bearer ${token}`}
+            headers: { "Authorization": `Bearer ${token}` }
         });
         let data = await r.json();
         let table = document.getElementById("nodes");
+        table.innerHTML = ""; // очистка перед заполнением
         data.forEach(n => {
             table.innerHTML += `<tr><td>${n.id}</td><td>${n.hostname}</td><td>${n.ip}</td></tr>`;
         });
@@ -19,13 +20,14 @@ async function loadNodes(){
     }
 }
 
-async function loadEvents(){
+async function loadEvents() {
     try {
         let r = await fetch("/api/events", {
-            headers: {"Authorization": `Bearer ${token}`}
+            headers: { "Authorization": `Bearer ${token}` }
         });
         let data = await r.json();
         let list = document.getElementById("events");
+        list.innerHTML = "";
         data.forEach(e => {
             list.innerHTML += `<li>${e.action} at ${e.created_at}</li>`;
         });
@@ -34,13 +36,14 @@ async function loadEvents(){
     }
 }
 
-async function loadTokens(){
+async function loadTokens() {
     try {
         let r = await fetch("/api/tokens", {
-            headers: {"Authorization": `Bearer ${token}`}
+            headers: { "Authorization": `Bearer ${token}` }
         });
         let data = await r.json();
         let list = document.getElementById("tokens");
+        list.innerHTML = "";
         data.forEach(t => {
             list.innerHTML += `<li>${t.id} (${t.type}) at ${t.path}</li>`;
         });
@@ -49,11 +52,11 @@ async function loadTokens(){
     }
 }
 
-async function generate(){
+async function generate() {
     let node = document.getElementById("node").value;
     let type = document.getElementById("type").value;
     try {
-        await fetch("/api/generate", {
+        let r = await fetch("/api/generate", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -64,13 +67,18 @@ async function generate(){
                 type: type
             })
         });
-        alert("Honeytoken created");
+        if (r.status === 200) {
+            alert("Honeytoken created");
+            loadTokens(); // обновить список
+        } else {
+            alert("Error generating");
+        }
     } catch (e) {
         alert("Error generating");
     }
 }
 
-function startWS(){
+function startWS() {
     let ws = new WebSocket("ws://" + window.location.host + "/ws/events");
     ws.onmessage = (event) => {
         let list = document.getElementById("events");

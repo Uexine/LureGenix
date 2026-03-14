@@ -3,6 +3,7 @@ import os
 import uuid
 from groq import Groq
 from generator import generate_env, generate_passwords
+import glob
 
 app = FastAPI()
 
@@ -31,7 +32,7 @@ def generate(data: dict):
             )
             content = response.choices[0].message.content
         except Exception as e:
-            content = "Dummy content (error: " + str(e) + ")"
+            content = f"Dummy content (error: {str(e)})"
 
     filename = f"{file_type}_{token_id}.{file_type}"
     path = f"/tokens/{filename}"
@@ -39,3 +40,25 @@ def generate(data: dict):
         f.write(content)
 
     return {"token_id": token_id, "file": path, "node_id": node_id}
+
+@app.get("/tokens")
+def list_tokens():
+    """Возвращает список файлов-токенов из /tokens."""
+    files = glob.glob("/tokens/*.*")
+    tokens = []
+    for f in files:
+        basename = os.path.basename(f)
+        # Пример имени: pdf_abc123.pdf
+        parts = basename.split('_', 1)
+        if len(parts) == 2:
+            token_type = parts[0]
+            token_id = parts[1].split('.')[0]  # обрезаем расширение
+        else:
+            token_type = "unknown"
+            token_id = basename
+        tokens.append({
+            "id": token_id,
+            "type": token_type,
+            "path": f
+        })
+    return tokens

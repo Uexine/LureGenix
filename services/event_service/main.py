@@ -1,9 +1,12 @@
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import psycopg2
 import os
 from typing import List, Dict
 
 app = FastAPI()
+
+# Хранилище активных WebSocket-соединений
+active_connections: List[WebSocket] = []
 
 def get_db():
     return psycopg2.connect(
@@ -13,8 +16,16 @@ def get_db():
         password=os.getenv("DB_PASSWORD", "admin")
     )
 
+async def broadcast_event(message: str):
+    """Отправить сообщение всем подключённым клиентам."""
+    for connection in active_connections:
+        try:
+            await connection.send_text(message)
+        except:
+            pass  # Если соединение оборвалось, оно отвалится само
+
 @app.post("/event")
-def create_event(data: dict):
+async def create_event(data: dict):
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
@@ -24,6 +35,10 @@ def create_event(data: dict):
     conn.commit()
     cur.close()
     conn.close()
+    
+    # Оповещаем всех через WebSocket
+    await broadcast_event(f"New event: {data.get('action')} for token {data.get('token_id')}")
+    
     return {"status": "saved"}
 
 @app.get("/events")
@@ -39,6 +54,12 @@ def get_events() -> List[Dict]:
 @app.websocket("/ws/events")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    while True:
-        data = await websocket.receive_text()
-        await websocket.send_text(f"Event: {data}")
+    active_connections.append(websocket)
+    try:
+        while True:
+            # Ждём сообщения от клиента (необязательно)
+            data = await websocket.receive_text()
+            # Можно просто игнорировать или эхо
+            # await websocket.send_text(f"Echo: {data}")
+    except WebSocketDisconnect:
+        active_connections.remove(websocket)

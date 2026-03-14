@@ -1,9 +1,6 @@
-FROM python:3.11
-
+FROM python:3.11-slim
 WORKDIR /app
-
-RUN pip install requests
-
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 COPY agent.py .
-
-CMD ["python","agent.py"]
+CMD ["python", "agent.py"]
