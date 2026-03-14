@@ -6,4 +6,4 @@ RUN pip install requests
 
 COPY agent.py .
 
-CMD ["python", "agent.py"]
+CMD ["python","agent.py"]

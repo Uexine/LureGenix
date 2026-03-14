@@ -1,36 +1,25 @@
 from fastapi import FastAPI
-import docker
 import os
-from generator import generate_env,generate_passwords
+import uuid
 
-app=FastAPI()
-
-client=docker.from_env()
+app = FastAPI()
 
 
 @app.post("/generate")
-def generate(data:dict):
+def generate(data: dict):
 
-    token_type=data["token_type"]
-    placement=data["placement"]
-    path=data["path"]
+    token_id = str(uuid.uuid4())
 
-    if token_type=="env":
-        content=generate_env()
-    else:
-        content=generate_passwords()
+    filename = data.get("type", "token") + "_" + token_id + ".txt"
 
-    if placement=="host":
+    path = "/tokens/" + filename
 
-        with open(path,"w") as f:
-            f.write(content)
+    os.makedirs("/tokens", exist_ok=True)
 
-    elif placement=="container":
+    with open(path, "w") as f:
+        f.write("FAKE_SECRET_" + token_id)
 
-        container=client.containers.get(data["container"])
-
-        cmd=f"bash -c 'echo \"{content}\" > {path}'"
-
-        container.exec_run(cmd)
-
-    return {"status":"created"}
+    return {
+        "token_id": token_id,
+        "file": path
+    }

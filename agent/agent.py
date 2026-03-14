@@ -1,34 +1,14 @@
-import os
-import time
 import requests
-
-SERVER = "http://gateway:8000"
-
-WATCH = "/tmp/passwords.txt"
-
-last = None
-
-if os.path.exists(WATCH):
-    last = os.stat(WATCH).st_atime
-
+import time
 
 while True:
 
-    if os.path.exists(WATCH):
+    requests.post(
+        "http://gateway:8000/event",
+        json={
+            "token_id": "demo",
+            "description": "agent heartbeat"
+        }
+    )
 
-        new = os.stat(WATCH).st_atime
-
-        if last and new != last:
-
-            requests.post(
-                SERVER + "/event",
-                json={
-                    "token_id": 1,
-                    "action": "file_opened",
-                    "file": WATCH
-                }
-            )
-
-        last = new
-
-    time.sleep(3)
+    time.sleep(30)

@@ -1,55 +1,33 @@
-from fastapi import FastAPI,WebSocket
+from fastapi import FastAPI
 import psycopg2
+import os
 
-app=FastAPI()
-
-connections=[]
+app = FastAPI()
 
 
-def db():
-
+def get_db():
     return psycopg2.connect(
-        host="postgres",
-        database="luregenix",
-        user="admin",
-        password="admin"
+        host=os.getenv("DB_HOST", "postgres"),
+        database=os.getenv("DB_NAME", "luregenix"),
+        user=os.getenv("DB_USER", "admin"),
+        password=os.getenv("DB_PASSWORD", "admin")
     )
 
 
-@app.websocket("/ws")
-async def websocket(ws:WebSocket):
-
-    await ws.accept()
-    connections.append(ws)
-
-    while True:
-        await ws.receive_text()
-
-
-async def notify(event):
-
-    for ws in connections:
-        await ws.send_json(event)
-
-
 @app.post("/event")
-async def event(data:dict):
+def event(data: dict):
 
-    conn=db()
-    cur=conn.cursor()
+    conn = get_db()
+    cur = conn.cursor()
 
     cur.execute(
-        "INSERT INTO events(node_id,token_id,action,file_path) VALUES(%s,%s,%s,%s)",
-        (
-            data["node_id"],
-            data["token_id"],
-            data["action"],
-            data["file"]
-        )
+        "INSERT INTO events(token_id,description) VALUES(%s,%s)",
+        (data.get("token_id"), data.get("description"))
     )
 
     conn.commit()
 
-    await notify(data)
+    cur.close()
+    conn.close()
 
-    return {"status":"ok"}
+    return {"status": "saved"}

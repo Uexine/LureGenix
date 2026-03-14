@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, HTTPException
 import requests
 
 app = FastAPI()
@@ -10,25 +10,26 @@ EVENT = "http://event_service:8000"
 
 @app.post("/login")
 def login(data: dict):
-    return requests.post(AUTH + "/login", json=data).json()
+
+    r = requests.post(AUTH + "/login", json=data)
+
+    if r.status_code != 200:
+        raise HTTPException(status_code=r.status_code)
+
+    return r.json()
 
 
 @app.post("/generate")
 def generate(data: dict):
-    return requests.post(TOKEN + "/generate", json=data).json()
+
+    r = requests.post(TOKEN + "/generate", json=data)
+
+    return r.json()
 
 
 @app.post("/event")
 def event(data: dict):
-    return requests.post(EVENT + "/event", json=data).json()
 
+    r = requests.post(EVENT + "/event", json=data)
 
-@app.websocket("/ws")
-async def ws_proxy(ws: WebSocket):
-
-    await ws.accept()
-
-    async with requests.Session() as s:
-        while True:
-            data = await ws.receive_text()
-            await ws.send_text(data)
+    return r.json()
