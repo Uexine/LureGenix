@@ -1,8 +1,11 @@
 version: '3.8'
 
 services:
-  web:
+  nginx:
     image: nginx:alpine
     ports:
       - "8080:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html  # Монтируем папку frontend
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf  # если есть конфиг
     restart: unless-stopped
