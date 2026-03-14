@@ -6,7 +6,7 @@ import os
 
 app = FastAPI()
 
-SECRET = os.getenv("JWT_SECRET")
+SECRET = os.getenv("JWT_SECRET", "luregenix_secret")  # задай в .env
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -27,9 +27,9 @@ def login(data: dict):
         (data["username"],)
     )
     row = cur.fetchone()
+    cur.close()
+    conn.close()
     if not row or not pwd_context.verify(data["password"], row[0]):
         raise HTTPException(status_code=401, detail="Invalid login")
     token = jwt.encode({"user": data["username"]}, SECRET, algorithm="HS256")
-    cur.close()
-    conn.close()
     return {"token": token}
