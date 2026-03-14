@@ -3,7 +3,9 @@
 
 <head>
 
-<title>LureGenix Admin</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>LureGenix SOC</title>
 
 <link rel="stylesheet" href="/css/style.css">
 
@@ -11,22 +13,26 @@
 
 <body>
 
-<div class="login">
+<div class="container">
 
-<h2>LureGenix Admin</h2>
+<div class="login-card">
 
-<input id="user" placeholder="Username">
+<h1>LureGenix</h1>
+<p>Security Operations Center</p>
 
-<input id="pass" type="password" placeholder="Password">
+<input id="username" placeholder="Username">
 
-<button onclick="login()">Login</button>
+<input id="password" type="password" placeholder="Password">
+
+<button id="loginBtn">Login</button>
 
 <div id="error"></div>
 
 </div>
 
-<script src="/js/app.js"></script>
+</div>
+
+<script src="/js/login.js"></script>
 
 </body>
-
 </html>

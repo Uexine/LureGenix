@@ -2,32 +2,60 @@ services:
 
   postgres:
     image: postgres:15
+    container_name: luregenix-postgres
+    restart: always
     environment:
       POSTGRES_DB: luregenix
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: admin
     volumes:
       - ./db:/docker-entrypoint-initdb.d
+      - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   auth_service:
     build: ./services/auth_service
+    container_name: luregenix-auth
+    restart: always
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_NAME: luregenix
+      DB_USER: admin
+      DB_PASSWORD: admin
 
   honeytoken_service:
     build: ./services/honeytoken_service
+    container_name: luregenix-honeytoken
+    restart: always
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
   event_service:
     build: ./services/event_service
+    container_name: luregenix-event
+    restart: always
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_NAME: luregenix
+      DB_USER: admin
+      DB_PASSWORD: admin
 
   gateway:
     build: ./gateway
+    container_name: luregenix-gateway
+    restart: always
     depends_on:
       - auth_service
       - honeytoken_service
@@ -37,11 +65,15 @@ services:
 
   agent:
     build: ./agent
+    container_name: luregenix-agent
+    restart: always
     depends_on:
       - gateway
 
   nginx:
     image: nginx:alpine
+    container_name: luregenix-nginx
+    restart: always
     ports:
       - "8080:80"
     volumes:
@@ -49,3 +81,6 @@ services:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
     depends_on:
       - gateway
+
+volumes:
+  postgres_data:
