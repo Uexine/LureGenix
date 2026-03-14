@@ -1,10 +1,10 @@
 services:
   postgres:
-    image: postgres:18  # Обновил до актуальной
+    image: postgres:16
     environment:
-      POSTGRES_DB: ${DB_NAME:-luregenix}
-      POSTGRES_USER: ${DB_USER:-admin}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-admin}
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - ./db:/docker-entrypoint-initdb.d
     ports:
@@ -15,18 +15,32 @@ services:
     depends_on:
       - postgres
     environment:
+      - DB_HOST=postgres
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
       - JWT_SECRET=${JWT_SECRET}
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
 
   honeytoken_service:
     build: ./services/honeytoken_service
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./tokens:/tokens  # Добавил volume для persistence токенов
+      - ./tokens:/tokens  # для persistence
+    environment:
+      - GROK_API_KEY=${GROK_API_KEY}
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
 
   event_service:
     build: ./services/event_service
     depends_on:
       - postgres
+    environment:
+      - DB_HOST=postgres
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
 
   gateway:
     build: ./gateway
@@ -38,6 +52,7 @@ services:
       - "8000:8000"
     environment:
       - JWT_SECRET=${JWT_SECRET}
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
 
   agent:
     build: ./agent
@@ -45,7 +60,7 @@ services:
       - gateway
 
   nginx:
-    image: nginx:alpine3.19  # Обновил
+    image: nginx:alpine3.20
     ports:
       - "8080:80"
     volumes:

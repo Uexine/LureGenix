@@ -1,7 +1,7 @@
 from fastapi import FastAPI, WebSocket
 import psycopg2
 import os
-from typing import List
+from typing import List, Dict
 
 app = FastAPI()
 
@@ -19,7 +19,7 @@ def create_event(data: dict):
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO events(token_id, action, file_path) VALUES(%s, %s, %s)",
-        (data.get("token_id"), data.get("description", "heartbeat"), data.get("file_path", ""))
+        (data.get("token_id"), data.get("description", "access"), data.get("file_path", ""))
     )
     conn.commit()
     cur.close()
@@ -27,10 +27,10 @@ def create_event(data: dict):
     return {"status": "saved"}
 
 @app.get("/events")
-def get_events() -> List[dict]:
+def get_events() -> List[Dict]:
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM events ORDER BY created_at DESC LIMIT 50")
+    cur.execute("SELECT id, token_id, action, file_path, created_at FROM events ORDER BY created_at DESC LIMIT 50")
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -40,5 +40,5 @@ def get_events() -> List[dict]:
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     while True:
-        data = await websocket.receive_text()  # Или poll DB for new events
-        await websocket.send_text(f"Event: {data}")
+        data = await websocket.receive_text()
+        await websocket.send_text(f"Event received: {data}")

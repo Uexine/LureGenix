@@ -42,8 +42,15 @@ async def get_events(request: Request):
     r = requests.get(EVENT + "/events")
     return r.json()
 
-@app.get("/nodes")  # Dummy для дашборда
-def get_nodes():
-    return [{"id": 1, "hostname": "agent1", "ip": "172.17.0.1"}]
+@app.get("/nodes")
+async def get_nodes(request: Request):
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    validate_token(token)
+    return [{"id": 1, "hostname": "agent1", "ip": "172.17.0.1"}, {"id": 2, "hostname": "agent2", "ip": "172.17.0.2"}]  # dummy
 
-# Для WS — проксируется через Nginx
+@app.get("/tokens")
+async def get_tokens(request: Request):
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    validate_token(token)
+    # TODO: Реальный GET из DB или honeytoken_service
+    return [{"id": "uuid1", "type": "txt", "path": "/tokens/token_uuid1.txt"}]  # dummy
