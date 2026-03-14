@@ -1,33 +1,26 @@
-document.getElementById("loginBtn").onclick = async () => {
+async function login(){
 
-let username=document.getElementById("username").value
-let password=document.getElementById("password").value
+    const username = document.getElementById("user").value
+    const password = document.getElementById("pass").value
 
-let r=await fetch("/api/login",{
+    const res = await fetch("/api/login",{
+        method:"POST",
+        headers:{
+            "Content-Type":"application/json"
+        },
+        body:JSON.stringify({
+            username:username,
+            password:password
+        })
+    })
 
-method:"POST",
+    if(res.ok){
 
-headers:{
-"Content-Type":"application/json"
-},
+        window.location.href="/dashboard.html"
 
-body:JSON.stringify({
-username,
-password
-})
+    }else{
 
-})
+        document.getElementById("error").innerText="Invalid login"
 
-if(r.status!==200){
-
-document.getElementById("error").innerText="Invalid login"
-return
-}
-
-let data=await r.json()
-
-localStorage.setItem("token",data.token)
-
-window.location="/dashboard"
-
+    }
 }

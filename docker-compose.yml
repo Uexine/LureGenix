@@ -1,19 +1,24 @@
 services:
   postgres:
-    image: postgres:16
+    image: postgres:15
     environment:
-      POSTGRES_DB: ${DB_NAME}
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: luregenix
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
     volumes:
       - ./db:/docker-entrypoint-initdb.d
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin"]
+      interval: 5s
+      retries: 5
 
   auth_service:
     build: ./services/auth_service
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
       - DB_HOST=postgres
       - DB_NAME=${DB_NAME}
@@ -24,6 +29,10 @@ services:
 
   honeytoken_service:
     build: ./services/honeytoken_service
+    depends_on:
+      postgres:
+        condition: service_healthy
+
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./tokens:/tokens
@@ -34,7 +43,8 @@ services:
   event_service:
     build: ./services/event_service
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
       - DB_HOST=postgres
       - DB_NAME=${DB_NAME}
@@ -45,9 +55,8 @@ services:
   gateway:
     build: ./gateway
     depends_on:
-      - auth_service
-      - honeytoken_service
-      - event_service
+      postgres:
+        condition: service_healthy
     ports:
       - "8000:8000"
     environment:
@@ -57,7 +66,9 @@ services:
   agent:
     build: ./agent
     depends_on:
-      - gateway
+      postgres:
+        condition: service_healthy
+
 
   nginx:
     image: nginx:alpine3.20
@@ -67,4 +78,5 @@ services:
       - ./frontend:/usr/share/nginx/html
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
     depends_on:
-      - gateway
+      postgres:
+        condition: service_healthy
