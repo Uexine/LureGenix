@@ -1,72 +1,45 @@
 <!DOCTYPE html>
 <html>
-
 <head>
-
 <title>LureGenix SOC</title>
-
 <link rel="stylesheet" href="/css/style.css">
-
 </head>
-
 <body>
-
 <div class="sidebar">
-
 <h2>LureGenix</h2>
-
 <a href="#">Dashboard</a>
 <a href="#">Nodes</a>
 <a href="#">Honeytokens</a>
 <a href="#">Events</a>
-
 </div>
-
 <div class="main">
-
 <h1>Security Dashboard</h1>
-
 <div class="card">
-
 <h3>Network Nodes</h3>
-
 <table id="nodes"></table>
-
 </div>
-
 <div class="card">
-
 <h3>Create Honeytoken</h3>
-
-<select id="node"></select>
-
+<select id="node">
+<option value="1">agent1</option>
+<option value="2">agent2</option>
+</select>
 <select id="type">
-
 <option>pdf</option>
 <option>docx</option>
 <option>ssh_key</option>
-
 </select>
-
 <button onclick="generate()">Generate</button>
-
 </div>
-
 <div class="card">
-
+<h3>Honeytokens</h3>
+<ul id="tokens"></ul>
+</div>
+<div class="card">
 <h3>Security Events</h3>
-
 <ul id="events"></ul>
-
 </div>
-
 </div>
-
-<script src="/js/dashboard.js">if(!localStorage.getItem("token")){
-window.location="/login"
-}
-</script>
-
+<script src="/js/dashboard.js"></script>
 </body>
-
 </html>

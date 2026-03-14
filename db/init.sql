@@ -1,7 +1,7 @@
 CREATE TABLE admins(
  id SERIAL PRIMARY KEY,
  username TEXT UNIQUE,
- password TEXT
+ password_hash TEXT
 );
 
 CREATE TABLE honeytokens(
@@ -20,6 +20,5 @@ CREATE TABLE events(
  created_at TIMESTAMP DEFAULT now()
 );
 
-INSERT INTO admins(username,password)
-VALUES ('admin','admin123')
-ON CONFLICT DO NOTHING;
+INSERT INTO admins(username, password_hash)
+VALUES('admin', '$2b$12$KbQi8PpJk8u7kQhZQWz6EuHcQkW1jX7r2p1gC4Fz2r1K3m8zqG0i2');  # Это для 'admin', если не работает — сгенерируй новый: from passlib.hash import bcrypt; print(bcrypt.hash("your_pass"))

@@ -26,7 +26,7 @@ services:
     build: ./services/honeytoken_service
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./tokens:/tokens  # для persistence
+      - ./tokens:/tokens
     environment:
       - GROK_API_KEY=${GROK_API_KEY}
     command: uvicorn main:app --host 0.0.0.0 --port 8000

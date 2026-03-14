@@ -19,7 +19,7 @@ def create_event(data: dict):
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO events(token_id, action, file_path) VALUES(%s, %s, %s)",
-        (data.get("token_id"), data.get("description", "access"), data.get("file_path", ""))
+        (data.get("token_id"), data.get("action", "heartbeat"), data.get("file_path", ""))
     )
     conn.commit()
     cur.close()
@@ -41,4 +41,4 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     while True:
         data = await websocket.receive_text()
-        await websocket.send_text(f"Event received: {data}")
+        await websocket.send_text(f"Event: {data}")
