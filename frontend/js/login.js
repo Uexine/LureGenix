@@ -13,7 +13,7 @@ document.getElementById("loginBtn").onclick = async () => {
         }
         let data = await r.json();
         localStorage.setItem("token", data.token);
-        window.location = "/dashboard.html";  // fix redirect
+        window.location = "/dashboard.html";
     } catch (e) {
         document.getElementById("error").innerText = "Error connecting";
     }

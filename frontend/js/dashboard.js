@@ -9,20 +9,14 @@ async function loadNodes(){
         let r = await fetch("/api/nodes", {
             headers: {"Authorization": `Bearer ${token}`}
         });
-        if (r.ok) {
-            let data = await r.json();
-            let table = document.getElementById("nodes");
-            data.forEach(n => {
-                table.innerHTML += `
-                <tr>
-                    <td>${n.id}</td>
-                    <td>${n.hostname}</td>
-                    <td>${n.ip}</td>
-                </tr>
-                `;
-            });
-        }
-    } catch (e) {}
+        let data = await r.json();
+        let table = document.getElementById("nodes");
+        data.forEach(n => {
+            table.innerHTML += `<tr><td>${n.id}</td><td>${n.hostname}</td><td>${n.ip}</td></tr>`;
+        });
+    } catch (e) {
+        console.error("Nodes error", e);
+    }
 }
 
 async function loadEvents(){
@@ -30,14 +24,14 @@ async function loadEvents(){
         let r = await fetch("/api/events", {
             headers: {"Authorization": `Bearer ${token}`}
         });
-        if (r.ok) {
-            let data = await r.json();
-            let list = document.getElementById("events");
-            data.forEach(e => {
-                list.innerHTML += `<li>${e.action} at ${e.created_at}</li>`;
-            });
-        }
-    } catch (e) {}
+        let data = await r.json();
+        let list = document.getElementById("events");
+        data.forEach(e => {
+            list.innerHTML += `<li>${e.action} at ${e.created_at}</li>`;
+        });
+    } catch (e) {
+        console.error("Events error", e);
+    }
 }
 
 async function loadTokens(){
@@ -45,21 +39,21 @@ async function loadTokens(){
         let r = await fetch("/api/tokens", {
             headers: {"Authorization": `Bearer ${token}`}
         });
-        if (r.ok) {
-            let data = await r.json();
-            let list = document.getElementById("tokens");
-            data.forEach(t => {
-                list.innerHTML += `<li>${t.id} (${t.type}) at ${t.path}</li>`;
-            });
-        }
-    } catch (e) {}
+        let data = await r.json();
+        let list = document.getElementById("tokens");
+        data.forEach(t => {
+            list.innerHTML += `<li>${t.id} (${t.type}) at ${t.path}</li>`;
+        });
+    } catch (e) {
+        console.error("Tokens error", e);
+    }
 }
 
 async function generate(){
     let node = document.getElementById("node").value;
     let type = document.getElementById("type").value;
     try {
-        let r = await fetch("/api/generate", {
+        await fetch("/api/generate", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -70,11 +64,7 @@ async function generate(){
                 type: type
             })
         });
-        if (r.ok) {
-            alert("Honeytoken created");
-        } else {
-            alert("Error: " + r.status);
-        }
+        alert("Honeytoken created");
     } catch (e) {
         alert("Error generating");
     }
@@ -86,7 +76,7 @@ function startWS(){
         let list = document.getElementById("events");
         list.innerHTML += `<li>${event.data}</li>`;
     };
-    ws.onerror = () => console.log("WS error");
+    ws.onerror = (e) => console.error("WS error", e);
 }
 
 loadNodes();

@@ -19,7 +19,7 @@ def create_event(data: dict):
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO events(token_id, action, file_path) VALUES(%s, %s, %s)",
-        (data.get("token_id"), data.get("action", "access"), data.get("file_path", ""))
+        (data.get("token_id"), data.get("action", "heartbeat"), data.get("file_path", ""))
     )
     conn.commit()
     cur.close()

@@ -30,8 +30,8 @@ def generate(data: dict):
                 model="grok-beta",
             )
             content = response.choices[0].message.content
-        except:
-            content = "Dummy content (no API key)"
+        except Exception as e:
+            content = "Dummy content (error: " + str(e) + ")"
 
     filename = f"{file_type}_{token_id}.{file_type}"
     path = f"/tokens/{filename}"
