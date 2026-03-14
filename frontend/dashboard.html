@@ -1,44 +1,219 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
-<title>LureGenix SOC</title>
-<link rel="stylesheet" href="/css/style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LureGenix SOC - Dashboard</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/dashboard.css">
 </head>
-<body>
-<div class="sidebar">
-<h2>LureGenix</h2>
-<a href="#">Dashboard</a>
-<a href="#">Nodes</a>
-<a href="#">Honeytokens</a>
-<a href="#">Events</a>
-</div>
-<div class="main">
-<h1>Security Dashboard</h1>
-<div class="card">
-<h3>Network Nodes</h3>
-<table id="nodes"></table>
-</div>
-<div class="card">
-<h3>Create Honeytoken</h3>
-<select id="node">
-  <option value="1">agent1</option>
-</select>
-<select id="type">
-  <option value="pdf">pdf</option>
-  <option value="docx">docx</option>
-  <option value="ssh_key">ssh_key</option>
-</select>
-<button onclick="generate()">Generate</button>
-</div>
-<div class="card">
-<h3>Honeytokens</h3>
-<ul id="tokens"></ul>
-</div>
-<div class="card">
-<h3>Security Events</h3>
-<ul id="events"></ul>
-</div>
-</div>
-<script src="/js/dashboard.js"></script>
+<body class="dashboard-body">
+    <!-- Сайдбар -->
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h2>LureGenix</h2>
+            <button class="toggle-sidebar" onclick="toggleSidebar()">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="#" class="active">
+                <i class="fas fa-chart-pie"></i>
+                <span>Дашборд</span>
+            </a>
+            <a href="#">
+                <i class="fas fa-server"></i>
+                <span>Ноды</span>
+            </a>
+            <a href="#">
+                <i class="fas fa-shield-alt"></i>
+                <span>Honeytokens</span>
+            </a>
+            <a href="#">
+                <i class="fas fa-bell"></i>
+                <span>События</span>
+                <span class="badge" style="position: static; margin-left: auto;">3</span>
+            </a>
+            <a href="#">
+                <i class="fas fa-chart-line"></i>
+                <span>Аналитика</span>
+            </a>
+            <a href="#">
+                <i class="fas fa-cog"></i>
+                <span>Настройки</span>
+            </a>
+        </nav>
+    </div>
+
+    <!-- Основной контент -->
+    <main class="main-content" id="mainContent">
+        <!-- Верхняя панель -->
+        <div class="top-bar">
+            <div class="page-title">
+                <h1>Дашборд безопасности</h1>
+                <p>Отслеживайте активность ваших honeytoken'ов в реальном времени</p>
+            </div>
+            <div class="user-menu">
+                <div class="notifications">
+                    <i class="fas fa-bell"></i>
+                    <span class="badge">3</span>
+                </div>
+                <div class="user-profile" onclick="logout()">
+                    <div class="avatar">A</div>
+                    <div class="user-info">
+                        <div class="name">Admin</div>
+                        <div class="role">SOC Analyst</div>
+                    </div>
+                    <i class="fas fa-chevron-down" style="color: var(--text-secondary);"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Статистика -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-header">
+                    <div class="stat-icon">
+                        <i class="fas fa-server"></i>
+                    </div>
+                    <div class="stat-info">
+                        <h3>Активные ноды</h3>
+                        <div class="stat-number" id="nodeCount">0</div>
+                    </div>
+                </div>
+                <div class="stat-footer">
+                    <span class="trend-up"><i class="fas fa-arrow-up"></i> +2</span>
+                    <span>за последний час</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-header">
+                    <div class="stat-icon">
+                        <i class="fas fa-shield-alt"></i>
+                    </div>
+                    <div class="stat-info">
+                        <h3>Honeytokens</h3>
+                        <div class="stat-number" id="tokenCount">0</div>
+                    </div>
+                </div>
+                <div class="stat-footer">
+                    <span class="trend-up"><i class="fas fa-arrow-up"></i> +5</span>
+                    <span>за сегодня</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-header">
+                    <div class="stat-icon">
+                        <i class="fas fa-bell"></i>
+                    </div>
+                    <div class="stat-info">
+                        <h3>События</h3>
+                        <div class="stat-number" id="eventCount">0</div>
+                    </div>
+                </div>
+                <div class="stat-footer">
+                    <span class="trend-up"><i class="fas fa-arrow-up"></i> +12</span>
+                    <span>последние 24ч</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-header">
+                    <div class="stat-icon">
+                        <i class="fas fa-exclamation-triangle"></i>
+                    </div>
+                    <div class="stat-info">
+                        <h3>Тревоги</h3>
+                        <div class="stat-number" id="alertCount">3</div>
+                    </div>
+                </div>
+                <div class="stat-footer">
+                    <span class="trend-down"><i class="fas fa-arrow-down"></i> -2</span>
+                    <span>с прошлой недели</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Форма создания токена -->
+        <div class="section-header">
+            <h2>Создать новый honeytoken</h2>
+        </div>
+        <div class="create-token-form">
+            <div class="form-group">
+                <label>Выберите ноду</label>
+                <select id="node">
+                    <option value="1">agent1 (127.0.0.1)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Тип токена</label>
+                <select id="type">
+                    <option value="ssh_key">SSH ключ</option>
+                    <option value="pdf">PDF документ</option>
+                    <option value="docx">Word документ</option>
+                    <option value="env">.env файл</option>
+                    <option value="password">Пароль</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Название (опционально)</label>
+                <input type="text" id="tokenName" placeholder="production-db-key">
+            </div>
+            <button class="btn btn-primary" onclick="generateToken()">
+                <i class="fas fa-plus"></i> Сгенерировать
+            </button>
+        </div>
+
+        <!-- Таблица нод -->
+        <div class="section-header" style="margin-top: 32px;">
+            <h2>Активные ноды</h2>
+            <button class="btn btn-outline">
+                <i class="fas fa-sync-alt"></i> Обновить
+            </button>
+        </div>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Хостнейм</th>
+                        <th>IP адрес</th>
+                        <th>Статус</th>
+                        <th>Последний heartbeat</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody id="nodesTable">
+                    <tr>
+                        <td colspan="6" class="loading">
+                            <div class="spinner"></div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- События в реальном времени -->
+        <div class="section-header" style="margin-top: 32px;">
+            <h2>События в реальном времени</h2>
+            <div>
+                <span class="status-badge status-active">
+                    <i class="fas fa-circle" style="font-size: 0.6rem; margin-right: 4px;"></i>
+                    WebSocket подключен
+                </span>
+            </div>
+        </div>
+        <div class="events-list" id="eventsList">
+            <!-- События будут добавляться сюда -->
+            <div class="loading">
+                <div class="spinner"></div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/js/dashboard.js"></script>
 </body>
 </html>
