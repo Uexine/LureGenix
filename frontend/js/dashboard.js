@@ -1,17 +1,18 @@
-if (!localStorage.getItem("token")) {
-    window.location = "/";
-}
+// Убираем проверку токена
+// if (!localStorage.getItem("token")) {
+//     window.location = "/";
+// }
 
-const token = localStorage.getItem("token");
+const token = localStorage.getItem("token") || ""; // может быть пустым
 
 async function loadNodes() {
     try {
         let r = await fetch("/api/nodes", {
-            headers: { "Authorization": `Bearer ${token}` }
+            headers: token ? { "Authorization": `Bearer ${token}` } : {}
         });
         let data = await r.json();
         let table = document.getElementById("nodes");
-        table.innerHTML = ""; // очистка перед заполнением
+        table.innerHTML = "";
         data.forEach(n => {
             table.innerHTML += `<tr><td>${n.id}</td><td>${n.hostname}</td><td>${n.ip}</td></tr>`;
         });
@@ -23,7 +24,7 @@ async function loadNodes() {
 async function loadEvents() {
     try {
         let r = await fetch("/api/events", {
-            headers: { "Authorization": `Bearer ${token}` }
+            headers: token ? { "Authorization": `Bearer ${token}` } : {}
         });
         let data = await r.json();
         let list = document.getElementById("events");
@@ -39,7 +40,7 @@ async function loadEvents() {
 async function loadTokens() {
     try {
         let r = await fetch("/api/tokens", {
-            headers: { "Authorization": `Bearer ${token}` }
+            headers: token ? { "Authorization": `Bearer ${token}` } : {}
         });
         let data = await r.json();
         let list = document.getElementById("tokens");
@@ -60,7 +61,7 @@ async function generate() {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "Authorization": `Bearer ${token}`
+                ...(token ? { "Authorization": `Bearer ${token}` } : {})
             },
             body: JSON.stringify({
                 node_id: node,
@@ -69,12 +70,13 @@ async function generate() {
         });
         if (r.status === 200) {
             alert("Honeytoken created");
-            loadTokens(); // обновить список
+            loadTokens();
         } else {
-            alert("Error generating");
+            let data = await r.json();
+            alert("Error generating: " + (data.detail || "Unknown error"));
         }
     } catch (e) {
-        alert("Error generating");
+        alert("Error generating: " + e);
     }
 }
 

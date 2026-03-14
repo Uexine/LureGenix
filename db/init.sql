@@ -1,10 +1,10 @@
-CREATE TABLE admins(
+CREATE TABLE IF NOT EXISTS admins(
     id SERIAL PRIMARY KEY,
     username TEXT UNIQUE,
     password_hash TEXT
 );
 
-CREATE TABLE honeytokens(
+CREATE TABLE IF NOT EXISTS honeytokens(
     id SERIAL PRIMARY KEY,
     token_type TEXT,
     file_path TEXT,
@@ -12,13 +12,15 @@ CREATE TABLE honeytokens(
     created_at TIMESTAMP DEFAULT now()
 );
 
-CREATE TABLE events(
+CREATE TABLE IF NOT EXISTS events(
     id SERIAL PRIMARY KEY,
-    token_id TEXT,  -- изменено с INT на TEXT
+    token_id TEXT,
     action TEXT,
     file_path TEXT,
     created_at TIMESTAMP DEFAULT now()
 );
 
-INSERT INTO admins(username, password_hash)
-VALUES('admin', '$2b$12$lG0bY9z3kLp5qR7sT8uVwXyZ2aB4cD6eF8hJ1kM3nP5qR7sT9uVwX');
+-- Добавим тестового пользователя
+INSERT INTO admins(username, password_hash) 
+VALUES('admin', 'not_used') 
+ON CONFLICT (username) DO NOTHING;
