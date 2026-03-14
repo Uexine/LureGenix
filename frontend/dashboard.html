@@ -62,7 +62,10 @@
 
 </div>
 
-<script src="/js/dashboard.js"></script>
+<script src="/js/dashboard.js">if(!localStorage.getItem("token")){
+window.location="/login"
+}
+</script>
 
 </body>
 
