@@ -206,21 +206,28 @@
     }
 
     async function markAllEventsRead() {
+        var btn = document.querySelector("#section-events .btn[onclick*='markAllEventsRead']");
+        if (btn) { btn.disabled = true; btn.innerHTML = "<i class=\"fas fa-spinner fa-spin\"></i> ..."; }
         if (!supportsMarkAllRead) {
             loadEvents();
+            if (btn) { btn.disabled = false; btn.innerHTML = "<i class=\"fas fa-check-double\"></i> Прочитано"; }
             return;
         }
         var res = await (window.apiPut || apiPut || function (path, body) { return api(path, { method: "PUT", body: body || {} }); })(PATH_READ_ALL, {});
-        if (res.status === 401) return;
-        if (res.status === 404) {
-            supportsMarkAllRead = false;
-            loadEvents();
+        if (res.status === 401) {
+            if (btn) { btn.disabled = false; btn.innerHTML = "<i class=\"fas fa-check-double\"></i> Прочитано"; }
             return;
         }
-        if (res.ok) {
+        if (res.status === 404) {
+            supportsMarkAllRead = false;
+            showNotification("Функция «Прочитано» недоступна на сервере", "error");
+        } else if (res.ok) {
             showNotification("Все события отмечены прочитанными", "success");
-            loadEvents();
+        } else {
+            showNotification("Не удалось отметить прочитанными", "error");
         }
+        loadEvents();
+        if (btn) { btn.disabled = false; btn.innerHTML = "<i class=\"fas fa-check-double\"></i> Прочитано"; }
     }
 
     function escapeHtml(s) {

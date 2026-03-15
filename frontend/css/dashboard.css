@@ -161,18 +161,21 @@
 .sidebar.collapsed .sidebar-nav a span:not(.sidebar-event-badge) {
     display: none;
 }
-/* При свёрнутой панели бейдж уведомлений остаётся видимым рядом с иконкой колокола */
+/* При свёрнутой панели бейдж — маленький кружок в углу иконки, не перекрывает колокольчик */
 .sidebar.collapsed .sidebar-nav a .sidebar-event-badge {
-    right: 6px !important;
-    transform: translateY(-50%) !important;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
+    top: 2px !important;
+    right: 2px !important;
+    left: auto !important;
+    transform: none !important;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 4px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.7rem;
+    font-size: 0.6rem;
     box-sizing: border-box;
+    border-radius: 50%;
 }
 
 /* Основной контент */
