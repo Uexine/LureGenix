@@ -62,13 +62,22 @@ curl -X POST http://localhost:8080/api/admins \
 - **gateway** — единая точка входа, проверка JWT, проксирование на сервисы
 - **auth_service** — логин по БД, выдача JWT; создание админов
 - **honeytoken_service** — генерация приманок (random + Groq для pdf/docx), запись в БД и в `/tokens`
-- **event_service** — приём событий (heartbeat, alert), хранение в БД, рассылка по WebSocket; список нод `GET /nodes`, регистрация нод `POST /register`
-- **agent** — при старте регистрирует ноду (`POST /register`), затем отправляет heartbeat; при компрометации можно вызвать `send_compromise(token_id, file_path)` → событие `action: alert` → уведомление в дашборде
-- **postgres** — БД (admins, honeytokens, events, nodes). Файл `db/02_nodes.sql` создаёт таблицу `nodes`, если её нет.
+- **event_service** — приём событий (heartbeat, alert), хранение в `event_log`, рассылка по WebSocket
+- **discovery_service** — список нод из БД (таблица `nodes`), регистрация агентов; опционально список контейнеров Docker
+- **agent** — регистрируется в discovery, отправляет heartbeat; при компрометации приманки — событие `action: alert`
+- **postgres** — БД (admins, nodes, honeytokens, events, event_log, scans)
 
-**Обнаружение нод:** агент при запуске вызывает `POST /api/register` с `hostname` и `ip`; дашборд получает список нод через `GET /api/nodes` (данные из таблицы `nodes`).
+Если после обновления кода запрос **События** даёт ошибку, создайте таблицу лога событий:
 
-**Уведомления о компрометации:** при событии с `action: alert` или `compromise` дашборд показывает всплывающее уведомление и обновляет счётчик «Тревоги»; события приходят в реальном времени по WebSocket `/ws/events`.
+```bash
+docker exec -i luregenix-postgres-1 psql -U admin -d luregenix < db/02_event_log.sql
+```
+
+## Ноды и уведомления о компрометации
+
+- **Ноды** заполняются из таблицы `nodes`. Агент при старте вызывает `POST /api/register` (hostname, ip) и попадает в список. Если нод в БД нет — в дашборде показывается заглушка (agent1).
+- **Компрометация:** при срабатывании приманки агент или детектор должен отправить `POST /api/event` с телом `{"token_id": "<id>", "action": "alert", "file_path": "<путь>"}`. На дашборде появится тревога и уведомление (в т.ч. по WebSocket в реальном времени).
+- Тест с хоста: `curl -X POST http://localhost:8080/api/event -H "Content-Type: application/json" -d '{"token_id":"test-123","action":"alert","file_path":"/tokens/ssh_key_xxx.txt"}'`
 
 ## Типы приманок
 

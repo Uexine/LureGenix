@@ -63,6 +63,20 @@ services:
     networks:
       - luregenix
 
+  discovery_service:
+    build: ./services/discovery_service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DB_HOST=postgres
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    networks:
+      - luregenix
+
   gateway:
     build: ./gateway
     depends_on:
@@ -71,6 +85,8 @@ services:
       honeytoken_service:
         condition: service_started
       event_service:
+        condition: service_started
+      discovery_service:
         condition: service_started
     ports:
       - "8000:8000"

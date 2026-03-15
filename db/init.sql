@@ -133,3 +133,15 @@ SELECT
     (SELECT COUNT(*) FROM honeytokens WHERE status = 'active') AS active_honeytokens,
     (SELECT COUNT(*) FROM events WHERE created_at > now() - interval '24 hours') AS events_last_24h,
     (SELECT COUNT(*) FROM events WHERE is_alert AND NOT acknowledged) AS unacknowledged_alerts;
+
+-- ============================================================
+-- Лог событий для агентов (token_id, action, file_path) — совместимость с gateway/event_service
+-- ============================================================
+CREATE TABLE IF NOT EXISTS event_log (
+    id SERIAL PRIMARY KEY,
+    token_id TEXT,
+    action TEXT,
+    file_path TEXT,
+    created_at TIMESTAMP DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON event_log(created_at);
