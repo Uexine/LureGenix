@@ -45,6 +45,13 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
+# ---------- HEALTH (для проверки готовности) ----------
+@app.get("/health")
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
+
+
 # ---------- LOGIN (публичный) ----------
 @app.post("/login")
 @app.post("/api/login")
