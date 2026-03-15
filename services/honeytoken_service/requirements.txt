@@ -1,3 +1,4 @@
 fastapi
 uvicorn
 groq
+psycopg2-binary

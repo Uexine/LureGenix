@@ -212,6 +212,13 @@ body {
 }
 
 /* Футер */
+.login-hint {
+    margin-top: 12px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    text-align: center;
+}
+
 .login-footer {
     display: flex;
     justify-content: space-between;

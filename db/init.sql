@@ -20,10 +20,11 @@ CREATE TABLE IF NOT EXISTS events(
     created_at TIMESTAMP DEFAULT now()
 );
 
--- Добавим тестового пользователя
+-- Тестовый админ: логин admin, пароль password
+-- (хэш сгенерирован через passlib bcrypt rounds=12)
 INSERT INTO admins(username,password_hash)
 VALUES(
 'admin',
-'$2b$12$uCwS7Yq3Ck9nJxW7CqkB4e6qC7s0yS6L3vV9YdYF3x0V4vJ3p1yqK'
+'$2b$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi'
 )
 ON CONFLICT DO NOTHING;

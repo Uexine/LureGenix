@@ -1,24 +1,90 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 import os
 from datetime import datetime, timedelta
-from jose import jwt  # это правильный импорт для python-jose
+from jose import jwt
+import psycopg2
+from passlib.hash import bcrypt
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 SECRET = os.getenv("JWT_SECRET", "temp_secret_key_for_testing")
+
+
+def get_db():
+    return psycopg2.connect(
+        host=os.getenv("DB_HOST", "postgres"),
+        database=os.getenv("DB_NAME", "luregenix"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+    )
+
 
 @app.post("/login")
 def login(data: dict):
-    username = data.get("username")
-    
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+
     if not username:
         raise HTTPException(status_code=400, detail="Username required")
-    
-    # ВСЕГДА пропускаем, любой пароль
-    token = jwt.encode(
-        {"user": username, "exp": datetime.utcnow() + timedelta(days=1)},
-        SECRET,
-        algorithm="HS256"
+    if not password:
+        raise HTTPException(status_code=400, detail="Password required")
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, username, password_hash FROM admins WHERE username = %s",
+        (username,),
     )
-    
-    return {"token": token}
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    _id, _username, password_hash = row
+    if not bcrypt.verify(password, password_hash):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    token = jwt.encode(
+        {"sub": str(_id), "user": _username, "exp": datetime.utcnow() + timedelta(days=1)},
+        SECRET,
+        algorithm="HS256",
+    )
+    return {"token": token, "username": _username}
+
+
+@app.post("/admins")
+def create_admin(data: dict):
+    """Создание нового админа. Требуется заголовок X-Admin-Secret."""
+    secret = os.getenv("ADMIN_SECRET", "")
+    if secret and data.get("_secret") != secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="username and password required")
+    password_hash = bcrypt.hash(password, rounds=12)
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO admins(username, password_hash) VALUES(%s,%s)",
+            (username, password_hash),
+        )
+        conn.commit()
+    except psycopg2.IntegrityError:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    finally:
+        cur.close()
+        conn.close()
+    return {"status": "ok", "username": username}

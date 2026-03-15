@@ -25,12 +25,22 @@ function toggleSidebar() {
     mainContent.classList.toggle('expanded');
 }
 
+function checkAuth(r) {
+    if (r && r.status === 401) {
+        localStorage.removeItem("token");
+        window.location = "/";
+        return true;
+    }
+    return false;
+}
+
 // Загрузка нод
 async function loadNodes() {
     try {
         let r = await fetch("/api/nodes", {
             headers: { "Authorization": `Bearer ${token}` }
         });
+        if (checkAuth(r)) return;
         let data = await r.json();
         
         let tbody = document.getElementById("nodesTable");
@@ -68,6 +78,7 @@ async function loadEvents() {
         let r = await fetch("/api/events", {
             headers: { "Authorization": `Bearer ${token}` }
         });
+        if (checkAuth(r)) return;
         let data = await r.json();
         
         let list = document.getElementById("eventsList");
@@ -86,21 +97,24 @@ async function loadEvents() {
     }
 }
 
-// Создание элемента события
+// Создание элемента события (API: token_id, action, file_path, created_at)
 function createEventElement(event) {
-    const date = new Date(event.created_at);
+    const rawDate = event.created_at || event.time;
+    const date = rawDate ? new Date(rawDate) : new Date();
     const timeStr = date.toLocaleTimeString();
     const dateStr = date.toLocaleDateString();
-    
+    const action = event.action || event.type || 'event';
+    const tokenId = event.token_id || event.source || '-';
+
     let icon = 'fa-info-circle';
     let color = 'var(--primary)';
-    
-    switch(event.action) {
+    switch (action) {
         case 'heartbeat':
             icon = 'fa-heartbeat';
             color = 'var(--secondary)';
             break;
         case 'access':
+        case 'compromise':
             icon = 'fa-download';
             color = 'var(--warning)';
             break;
@@ -109,7 +123,7 @@ function createEventElement(event) {
             color = 'var(--danger)';
             break;
     }
-    
+
     return `
         <div class="event-item">
             <div class="event-icon" style="color: ${color};">
@@ -117,7 +131,7 @@ function createEventElement(event) {
             </div>
             <div class="event-content">
                 <div class="event-title">
-                    <strong>${event.action}</strong> для токена ${event.token_id}
+                    <strong>${action}</strong> для токена ${tokenId}
                 </div>
                 <div class="event-time">
                     <i class="far fa-clock" style="margin-right: 4px;"></i>
@@ -135,6 +149,7 @@ async function loadTokens() {
         let r = await fetch("/api/tokens", {
             headers: { "Authorization": `Bearer ${token}` }
         });
+        if (checkAuth(r)) return;
         let data = await r.json();
         
         tokenCount = data.length;
@@ -169,12 +184,14 @@ async function generateToken() {
             })
         });
         
+        if (checkAuth(r)) return;
         if (r.status === 200) {
             showNotification("Honeytoken успешно создан!", "success");
             loadTokens();
+            loadEvents();
             document.getElementById("tokenName").value = '';
         } else {
-            let error = await r.json();
+            let error = await r.json().catch(() => ({}));
             showNotification("Ошибка: " + (error.detail || "Неизвестная ошибка"), "error");
         }
     } catch (e) {
@@ -196,29 +213,30 @@ function initWebSocket() {
     
     ws.onmessage = (event) => {
         console.log("New event:", event.data);
-        
-        // Добавляем событие в начало списка
-        let list = document.getElementById("eventsList");
-        let newEvent = document.createElement('div');
-        newEvent.innerHTML = createEventElement({
-            action: 'alert',
-            token_id: 'new',
-            created_at: new Date().toISOString(),
-            file_path: 'WebSocket event'
-        });
-        
-        if (list.firstChild) {
-            list.insertBefore(newEvent.firstChild, list.firstChild);
-        } else {
-            list.appendChild(newEvent.firstChild);
+        let payload = {};
+        try {
+            payload = JSON.parse(event.data);
+        } catch (e) {
+            payload = { action: 'event', token_id: '-', created_at: new Date().toISOString(), file_path: '' };
         }
-        
-        // Обновляем счетчик
+        let list = document.getElementById("eventsList");
+        let wrap = document.createElement('div');
+        wrap.innerHTML = createEventElement(payload);
+        let newEl = wrap.firstChild;
+        if (list.firstChild) {
+            list.insertBefore(newEl, list.firstChild);
+        } else {
+            list.appendChild(newEl);
+        }
         eventCount++;
-        document.getElementById("eventCount").textContent = eventCount;
-        
-        // Анимация
-        newEvent.firstChild.style.animation = 'slideIn 0.3s ease';
+        const ec = document.getElementById("eventCount");
+        if (ec) ec.textContent = eventCount;
+        if (payload.action === 'alert' || payload.action === 'compromise') {
+            const ac = document.getElementById("alertCount");
+            if (ac) ac.textContent = parseInt(ac.textContent || '0', 10) + 1;
+            showNotification('Тревога: компрометация приманки ' + (payload.token_id || ''), 'error');
+        }
+        newEl.style.animation = 'slideIn 0.3s ease';
     };
     
     ws.onerror = (e) => {

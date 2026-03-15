@@ -34,11 +34,17 @@ services:
 
   honeytoken_service:
     build: ./services/honeytoken_service
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./tokens:/tokens
     environment:
       - GROK_API_KEY=${GROK_API_KEY}
+      - DB_HOST=postgres
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     networks:
       - luregenix
