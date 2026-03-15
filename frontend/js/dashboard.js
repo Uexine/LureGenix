@@ -181,8 +181,7 @@
         if (res.ok) {
             showNotification("Honeytoken создан", "success");
             if (document.getElementById("tokenName")) document.getElementById("tokenName").value = "";
-            if (document.getElementById("tokenSavePath")) document.getElementById("tokenSavePath").value = "";
-            if (document.getElementById("tokenNodePath")) document.getElementById("tokenNodePath").value = "";
+            /* Каталог и путь на ноде не очищаем — удобно создавать несколько приманок подряд */
             loadTokens();
             loadEvents();
             loadNetworkMap();

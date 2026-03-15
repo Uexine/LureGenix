@@ -19,8 +19,10 @@ app.add_middleware(
 api_key = os.getenv("GROK_API_KEY")
 client = Groq(api_key=api_key) if api_key else None
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
-# Базовый каталог для сохранения (можно задать директорию внутри него)
+# Базовый каталог для сохранения (можно задать подкаталог внутри него)
 TOKENS_BASE = os.getenv("TOKENS_BASE", "/tokens")
+# Разрешённые префиксы для абсолютных путей (через запятую), иначе только пути внутри TOKENS_BASE
+ALLOWED_SAVE_PATHS = [p.strip() for p in os.getenv("ALLOWED_SAVE_PATHS", "").split(",") if p.strip()]
 
 
 def get_db():
@@ -85,9 +87,13 @@ def generate(data: dict):
     if save_path:
         if os.path.isabs(save_path):
             save_dir = os.path.normpath(save_path)
-            if not save_dir.startswith(base):
+            allowed = save_dir.startswith(base) or any(
+                save_dir.startswith(os.path.normpath(prefix)) for prefix in ALLOWED_SAVE_PATHS
+            )
+            if not allowed:
                 save_dir = base
         else:
+            # Относительный путь — подкаталог внутри TOKENS_BASE (например production → /tokens/production)
             save_dir = os.path.normpath(os.path.join(base, save_path.replace("\\", "/").strip("/")))
             if not save_dir.startswith(base):
                 save_dir = base

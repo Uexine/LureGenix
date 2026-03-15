@@ -41,6 +41,8 @@ JWT_SECRET=your_super_secret_key_here_min_32_chars
 GROK_API_KEY=your_grok_api_key_here
 # Опционально: секрет для создания новых админов (POST /api/admins)
 ADMIN_SECRET=optional_admin_creation_secret
+# Опционально: разрешённые префиксы абсолютных путей для сохранения приманок (через запятую)
+# ALLOWED_SAVE_PATHS=/var/app/secrets,/opt/keys
 ```
 
 ## Создание нового админа
@@ -58,10 +60,10 @@ curl -X POST http://localhost:8080/api/admins \
 
 ## Архитектура
 
-- **nginx** — раздача фронта и прокси на gateway и WebSocket
-- **gateway** — единая точка входа, проверка JWT, проксирование на сервисы
+- **nginx** — раздача фронта, прокси API на gateway, WebSocket `/ws/` на gateway (gateway проксирует на event_service)
+- **gateway** — единая точка входа, проверка JWT, проксирование на сервисы, прокси WebSocket `/ws/events` на event_service
 - **auth_service** — логин по БД, выдача JWT; создание админов
-- **honeytoken_service** — генерация приманок (random + Groq для pdf/docx), запись в БД и в `/tokens`
+- **honeytoken_service** — генерация приманок (random + Groq для pdf/docx), запись в БД. Файлы сохраняются в `TOKENS_BASE`; в форме «Каталог сохранения» задаётся **относительный** путь — создаётся подкаталог (например `production` → `/tokens/production`). Абсолютные пути разрешены только внутри `TOKENS_BASE` или при задании `ALLOWED_SAVE_PATHS` в .env.
 - **event_service** — приём событий (heartbeat, alert), хранение в `event_log`, рассылка по WebSocket
 - **discovery_service** — список нод из БД (таблица `nodes`), регистрация агентов; опционально список контейнеров Docker
 - **agent** — регистрируется в discovery, отправляет heartbeat; при компрометации приманки — событие `action: alert`
@@ -77,7 +79,14 @@ docker exec -i luregenix-postgres-1 psql -U admin -d luregenix < db/02_event_log
 
 - **Ноды** заполняются из таблицы `nodes`. Агент при старте вызывает `POST /api/register` (hostname, ip) и попадает в список. Если нод в БД нет — в дашборде показывается заглушка (agent1).
 - **Компрометация:** при срабатывании приманки агент или детектор должен отправить `POST /api/event` с телом `{"token_id": "<id>", "action": "alert", "file_path": "<путь>"}`. На дашборде появится тревога и уведомление (в т.ч. по WebSocket в реальном времени).
-- Тест с хоста: `curl -X POST http://localhost:8080/api/event -H "Content-Type: application/json" -d '{"token_id":"test-123","action":"alert","file_path":"/tokens/ssh_key_xxx.txt"}'`
+
+### Как протестировать уведомление о компрометации
+
+1. **Через curl (без агента):**  
+   `curl -X POST http://localhost:8080/api/event -H "Content-Type: application/json" -d "{\"token_id\":\"test-123\",\"action\":\"alert\",\"file_path\":\"/tokens/ssh_key_xxx.txt\"}"`  
+   В разделе «События» появится запись с действием `alert`, счётчик «Тревоги» увеличится; при подключённом WebSocket — всплывающее уведомление.
+
+2. **Через агента:** в коде ноды при обнаружении доступа к файлу-приманке вызовите `send_compromise(token_id, file_path)` из `agent/agent.py`. Агент отправит событие на gateway, оно попадёт в журнал и в дашборд по WebSocket.
 
 ## Типы приманок
 

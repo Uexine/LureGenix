@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException, Depends, Body, Request
+from fastapi import FastAPI, HTTPException, Depends, Body, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import requests
 import os
 import jwt
+import asyncio
 
 app = FastAPI()
 
@@ -17,6 +18,7 @@ app.add_middleware(
 
 AUTH_SERVICE = "http://auth_service:8000"
 EVENT_SERVICE = "http://event_service:8000"
+EVENT_WS_URL = "ws://event_service:8000/ws/events"
 TOKEN_SERVICE = "http://honeytoken_service:8000"
 DISCOVERY_SERVICE = "http://discovery_service:8000"
 JWT_SECRET = os.getenv("JWT_SECRET", "temp_secret_key_for_testing")
@@ -112,6 +114,44 @@ async def events(_: dict = Depends(verify_token)):
         return []  # при недоступности event_service отдаём пустой список, чтобы дашборд не падал
     except Exception:
         return []
+
+
+# ---------- WebSocket (прокси к event_service, чтобы /ws/events работал и через gateway, и через nginx) ----------
+@app.websocket("/ws/events")
+async def websocket_proxy(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        import websockets
+        async with websockets.connect(EVENT_WS_URL) as backend:
+            async def forward_client_to_backend():
+                try:
+                    while True:
+                        data = await websocket.receive_text()
+                        await backend.send(data)
+                except (WebSocketDisconnect, Exception):
+                    pass
+
+            async def forward_backend_to_client():
+                try:
+                    async for message in backend:
+                        await websocket.send_text(message)
+                except (WebSocketDisconnect, Exception):
+                    pass
+
+            t1 = asyncio.create_task(forward_client_to_backend())
+            t2 = asyncio.create_task(forward_backend_to_client())
+            done, pending = await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+    except Exception as e:
+        try:
+            await websocket.close(code=1011, reason=str(e)[:123])
+        except Exception:
+            pass
 
 # ---------- TOKENS ----------
 @app.get("/tokens")
