@@ -138,30 +138,32 @@
     box-shadow: var(--shadow-sm);
 }
 
-/* Бейдж количества событий — внутри пункта «События», не уезжает в угол */
+/* Бейдж количества событий — только у пункта «События», не в шапке */
 .sidebar-nav a {
     position: relative;
 }
-.sidebar-nav a .badge {
-    position: absolute;
-    right: 12px;
-    top: 50%;
-    transform: translateY(-50%);
-    margin-left: auto;
+.sidebar-nav a .sidebar-event-badge,
+#sidebarEventBadge.sidebar-event-badge {
+    position: absolute !important;
+    right: 12px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    margin: 0 !important;
     background: var(--danger);
     color: white;
     font-size: 0.7rem;
     padding: 2px 6px;
     border-radius: 20px;
     font-weight: 600;
+    border: none;
 }
 
 .sidebar.collapsed .sidebar-nav a span {
     display: none;
 }
-.sidebar.collapsed .sidebar-nav a .badge {
-    right: 50%;
-    transform: translate(50%, -50%);
+.sidebar.collapsed .sidebar-nav a .sidebar-event-badge {
+    right: 50% !important;
+    transform: translate(50%, -50%) !important;
 }
 
 /* Основной контент */

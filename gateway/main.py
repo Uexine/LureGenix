@@ -125,10 +125,20 @@ async def tokens(_: dict = Depends(verify_token)):
 @app.get("/token-types")
 @app.get("/api/token-types")
 async def token_types(_: dict = Depends(verify_token)):
-    result, status = forward_request(TOKEN_SERVICE, "/token-types", "GET")
-    if status != 200:
-        raise HTTPException(status_code=status, detail=result)
-    return result
+    try:
+        result, status = forward_request(TOKEN_SERVICE, "/token-types", "GET")
+        if status == 200 and isinstance(result, list):
+            return result
+    except Exception:
+        pass
+    return [
+        {"id": 1, "name": "ssh_key", "description": "Приватный SSH-ключ"},
+        {"id": 2, "name": "env_file", "description": "Файл .env"},
+        {"id": 3, "name": "api_key", "description": "Ключ API"},
+        {"id": 4, "name": "password", "description": "Пароль"},
+        {"id": 5, "name": "pdf", "description": "PDF"},
+        {"id": 6, "name": "docx", "description": "Word"},
+    ]
 
 # ---------- NODES (из discovery_service или заглушка) ----------
 @app.get("/nodes")

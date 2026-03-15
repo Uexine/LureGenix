@@ -34,16 +34,25 @@
     });
 
     async function loadTokenTypes() {
-        const res = await apiGet("token-types");
-        if (res.status === 401 || !res.ok) return;
-        const list = Array.isArray(res.data) ? res.data : [];
         const select = document.getElementById("typeSelect");
         if (!select) return;
-        select.innerHTML = list.length
-            ? list.map(function (t) {
-                return "<option value=\"" + escapeHtml(t.name) + "\">" + escapeHtml(t.description || t.name) + "</option>";
-            }).join("")
-            : "<option value=\"ssh_key\">SSH ключ</option><option value=\"env_file\">.env</option><option value=\"password\">Пароль</option><option value=\"pdf\">PDF</option><option value=\"docx\">Word</option>";
+        var list = [];
+        var res = await apiGet("token-types");
+        if (res.status === 401) return;
+        if (res.ok && Array.isArray(res.data)) list = res.data;
+        if (list.length === 0) {
+            list = [
+                { name: "ssh_key", description: "Приватный SSH-ключ" },
+                { name: "env_file", description: "Файл .env" },
+                { name: "api_key", description: "Ключ API" },
+                { name: "password", description: "Пароль" },
+                { name: "pdf", description: "PDF" },
+                { name: "docx", description: "Word" }
+            ];
+        }
+        select.innerHTML = list.map(function (t) {
+            return "<option value=\"" + escapeHtml(t.name) + "\">" + escapeHtml(t.description || t.name) + "</option>";
+        }).join("");
     }
 
     function showSection(id) {
@@ -179,11 +188,16 @@
         }
     }
 
+    var wsReconnectCount = 0;
+    var wsReconnectMax = 5;
     function initWebSocket() {
+        if (wsReconnectCount >= wsReconnectMax) return;
         var protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         var url = protocol + "//" + window.location.host + "/ws/events";
+        try { if (ws && ws.readyState !== WebSocket.CLOSED) ws.close(); } catch (e) {}
         ws = new WebSocket(url);
         ws.onopen = function () {
+            wsReconnectCount = 0;
             updateWsStatus(true);
         };
         ws.onmessage = function (ev) {
@@ -205,7 +219,9 @@
         };
         ws.onerror = ws.onclose = function () {
             updateWsStatus(false);
-            setTimeout(initWebSocket, 5000);
+            wsReconnectCount++;
+            var delay = Math.min(15000, 3000 * wsReconnectCount);
+            setTimeout(initWebSocket, delay);
         };
     }
 
