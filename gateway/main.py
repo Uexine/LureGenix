@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import requests
@@ -60,7 +60,11 @@ def health():
 # ---------- LOGIN (публичный) ----------
 @app.post("/login")
 @app.post("/api/login")
-async def login(data: dict):
+async def login(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
     result, status = forward_request(AUTH_SERVICE, "/login", "POST", data=data)
     if status != 200:
         raise HTTPException(status_code=status, detail=result)
@@ -69,7 +73,9 @@ async def login(data: dict):
 # ---------- GENERATE (требуется JWT) ----------
 @app.post("/generate")
 @app.post("/api/generate")
-async def generate(data: dict, _: dict = Depends(verify_token)):
+async def generate(data: dict = Body(default=None), _: dict = Depends(verify_token)):
+    if data is None:
+        data = {}
     result, status = forward_request(TOKEN_SERVICE, "/generate", "POST", data=data)
     if status != 200:
         raise HTTPException(status_code=status, detail=result)
@@ -78,7 +84,9 @@ async def generate(data: dict, _: dict = Depends(verify_token)):
 # ---------- EVENTS ----------
 @app.post("/event")
 @app.post("/api/event")
-async def event(data: dict):
+async def event(data: dict = Body(default=None)):
+    if data is None:
+        data = {}
     result, status = forward_request(EVENT_SERVICE, "/event", "POST", data=data)
     if status != 200:
         raise HTTPException(status_code=status, detail=result)
@@ -109,7 +117,9 @@ async def nodes(_: dict = Depends(verify_token)):
 
 # ---------- CREATE ADMIN (требуется JWT + ADMIN_SECRET в env) ----------
 @app.post("/api/admins")
-async def create_admin(data: dict, _: dict = Depends(verify_token)):
+async def create_admin(data: dict = Body(default=None), _: dict = Depends(verify_token)):
+    if data is None:
+        data = {}
     admin_secret = os.getenv("ADMIN_SECRET", "")
     payload = {k: v for k, v in data.items() if k in ("username", "password")}
     if admin_secret:

