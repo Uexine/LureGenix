@@ -398,5 +398,6 @@
     window.loadEvents = loadEvents;
     window.loadNetworkMap = loadNetworkMap;
     window.generateToken = generateToken;
+    window.markAllEventsRead = markAllEventsRead;
     window.logout = logout;
 })();

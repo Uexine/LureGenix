@@ -138,44 +138,44 @@
     box-shadow: var(--shadow-sm);
 }
 
-/* Бейдж количества событий — только у пункта «События», не в шапке */
+/* Бейдж количества событий — справа от текста, не на иконке */
 .sidebar-nav a {
     position: relative;
+    display: flex;
+    align-items: center;
 }
 .sidebar-nav a .sidebar-event-badge,
 #sidebarEventBadge.sidebar-event-badge {
-    position: absolute !important;
-    right: 12px !important;
-    top: 50% !important;
-    transform: translateY(-50%) !important;
-    margin: 0 !important;
+    margin-left: auto;
+    flex-shrink: 0;
     background: var(--danger);
     color: white;
     font-size: 0.7rem;
     padding: 2px 6px;
-    border-radius: 20px;
+    min-width: 18px;
+    height: 18px;
+    border-radius: 50%;
     font-weight: 600;
     border: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
 }
 
 .sidebar.collapsed .sidebar-nav a span:not(.sidebar-event-badge) {
     display: none;
 }
-/* При свёрнутой панели бейдж — маленький кружок в углу иконки, не перекрывает колокольчик */
 .sidebar.collapsed .sidebar-nav a .sidebar-event-badge {
-    top: 2px !important;
-    right: 2px !important;
+    margin-left: 0;
+    position: absolute !important;
+    top: 4px !important;
+    right: 4px !important;
     left: auto !important;
-    transform: none !important;
     min-width: 14px;
     height: 14px;
-    padding: 0 4px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    padding: 0;
     font-size: 0.6rem;
-    box-sizing: border-box;
-    border-radius: 50%;
 }
 
 /* Основной контент */
