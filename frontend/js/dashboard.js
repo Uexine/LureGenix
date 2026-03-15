@@ -60,7 +60,6 @@
             }).join("")
             : "<option value=\"1\">agent1 (127.0.0.1)</option>";
 
-        if (document.getElementById("section-nodes").classList.contains("hidden") && !refresh) return;
         if (data.length === 0) {
             tbody.innerHTML = "<tr><td colspan=\"5\" style=\"text-align:center;color:var(--text-secondary);\">Нет данных о нодах</td></tr>";
             return;
@@ -79,7 +78,6 @@
         document.getElementById("tokenCount").textContent = data.length;
 
         const tbody = document.getElementById("tokensTable");
-        if (document.getElementById("section-tokens").classList.contains("hidden") && !refresh) return;
         if (data.length === 0) {
             tbody.innerHTML = "<tr><td colspan=\"4\" style=\"text-align:center;color:var(--text-secondary);\">Нет honeytoken'ов</td></tr>";
             return;
@@ -102,8 +100,11 @@
 
         const alertCount = data.filter(function (e) { return e.action === "alert" || e.action === "compromise"; }).length;
         document.getElementById("alertCount").textContent = alertCount;
-        const badge = document.getElementById("sidebarEventBadge");
-        if (badge) badge.textContent = data.length;
+        var badge = document.getElementById("sidebarEventBadge");
+        if (badge) {
+            badge.textContent = data.length;
+            badge.style.display = data.length > 0 ? "" : "none";
+        }
 
         const html = data.length === 0
             ? "<div style=\"text-align:center;padding:40px;color:var(--text-secondary);\">Нет событий</div>"
