@@ -580,6 +580,92 @@ tr:hover td {
     background: var(--bg-tertiary);
 }
 
+/* Карта сети */
+.map-subtitle {
+    color: var(--text-secondary);
+    margin: -8px 0 16px 0;
+    font-size: 0.95rem;
+}
+
+.network-map {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 20px;
+}
+
+.map-node-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-light);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: var(--shadow-sm);
+    transition: var(--transition);
+}
+
+.map-node-card:hover {
+    box-shadow: var(--shadow-md);
+    border-color: var(--primary-light);
+}
+
+.map-node-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.map-node-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.map-node-title i {
+    color: var(--primary);
+}
+
+.map-node-meta {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    font-family: monospace;
+}
+
+.map-node-tokens {
+    border-top: 1px solid var(--border-light);
+    padding-top: 12px;
+}
+
+.map-token-empty {
+    font-size: 0.9rem;
+    color: var(--text-light);
+    font-style: italic;
+}
+
+.map-token-item {
+    font-size: 0.9rem;
+    padding: 6px 0;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.map-token-item i {
+    color: var(--secondary);
+}
+
+.map-token-item code {
+    font-size: 0.8rem;
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: 6px;
+    color: var(--text-secondary);
+}
+
 .event-icon {
     width: 40px;
     height: 40px;

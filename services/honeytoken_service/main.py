@@ -78,9 +78,20 @@ def generate(data: dict):
     node_id = data.get("node_id") or ""
     name = data.get("name") or ""
     directory = (data.get("directory") or "").strip().strip("/")
+    save_path = (data.get("save_path") or "").strip()
+    node_path = (data.get("node_path") or "").strip()
 
     base = os.path.normpath(TOKENS_BASE)
-    if directory:
+    if save_path:
+        if os.path.isabs(save_path):
+            save_dir = os.path.normpath(save_path)
+            if not save_dir.startswith(base):
+                save_dir = base
+        else:
+            save_dir = os.path.normpath(os.path.join(base, save_path.replace("\\", "/").strip("/")))
+            if not save_dir.startswith(base):
+                save_dir = base
+    elif directory:
         save_dir = os.path.normpath(os.path.join(base, directory))
         if not save_dir.startswith(base):
             save_dir = base
@@ -120,9 +131,14 @@ def generate(data: dict):
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
 
-    placement = f"node:{node_id}" + (f", name:{name}" if name else "")
-    if directory:
-        placement = (placement + f", dir:{directory}").strip(", ")
+    placement = f"node:{node_id}"
+    if node_path:
+        placement += f", path:{node_path}"
+    if name:
+        placement += f", name:{name}"
+    if directory or save_path:
+        placement += f", dir:{directory or save_path}"
+    placement = placement.strip(", ")
     save_token_to_db(file_type, path, placement)
 
     return {"token_id": token_id, "file": path, "node_id": node_id, "type": file_type}

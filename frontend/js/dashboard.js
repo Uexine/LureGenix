@@ -10,6 +10,7 @@
         nodes:     { title: "Ноды", subtitle: "Активные ноды сети" },
         tokens:    { title: "Honeytokens", subtitle: "Список созданных приманок" },
         events:    { title: "События", subtitle: "Журнал событий" },
+        map:       { title: "Карта сети", subtitle: "Ноды и приманки на них" },
     };
 
     document.addEventListener("DOMContentLoaded", function () {
@@ -30,6 +31,7 @@
         loadTokenTypes();
         loadTokens();
         loadEvents();
+        loadNetworkMap();
         initWebSocket();
     });
 
@@ -67,6 +69,7 @@
             document.getElementById("pageTitle").textContent = s.title;
             document.getElementById("pageSubtitle").textContent = s.subtitle;
         }
+        if (id === "map") loadNetworkMap();
     }
 
     async function loadNodes(refresh) {
@@ -164,11 +167,13 @@
         var nodeId = document.getElementById("nodeSelect").value;
         var type = document.getElementById("typeSelect").value;
         var name = (document.getElementById("tokenName").value || "").trim();
-        var directory = (document.getElementById("tokenDirectory") ? document.getElementById("tokenDirectory").value || "" : "").trim();
+        var savePath = (document.getElementById("tokenSavePath") ? document.getElementById("tokenSavePath").value || "" : "").trim();
+        var nodePath = (document.getElementById("tokenNodePath") ? document.getElementById("tokenNodePath").value || "" : "").trim();
         btn.disabled = true;
         btn.innerHTML = "<i class=\"fas fa-spinner fa-spin\"></i> Генерация...";
         var payload = { node_id: nodeId, type: type, name: name };
-        if (directory) payload.directory = directory;
+        if (savePath) payload.save_path = savePath;
+        if (nodePath) payload.node_path = nodePath;
         var res = await apiPost("generate", payload);
         btn.disabled = false;
         btn.innerHTML = "<i class=\"fas fa-plus\"></i> Сгенерировать";
@@ -176,9 +181,11 @@
         if (res.ok) {
             showNotification("Honeytoken создан", "success");
             if (document.getElementById("tokenName")) document.getElementById("tokenName").value = "";
-            if (document.getElementById("tokenDirectory")) document.getElementById("tokenDirectory").value = "";
+            if (document.getElementById("tokenSavePath")) document.getElementById("tokenSavePath").value = "";
+            if (document.getElementById("tokenNodePath")) document.getElementById("tokenNodePath").value = "";
             loadTokens();
             loadEvents();
+            loadNetworkMap();
         } else {
             var msg = "Ошибка создания токена";
             if (res.data && res.data.detail) {
@@ -254,6 +261,60 @@
         loadEvents();
     }, 30000);
 
+    function parsePlacement(placement) {
+        var out = { node_id: "", path: "", name: "", dir: "" };
+        if (!placement || typeof placement !== "string") return out;
+        placement.split(",").forEach(function (part) {
+            var kv = part.trim().split(":");
+            if (kv.length >= 2) {
+                var k = kv[0].trim().toLowerCase();
+                var v = kv.slice(1).join(":").trim();
+                if (k === "node") out.node_id = v;
+                else if (k === "path") out.path = v;
+                else if (k === "name") out.name = v;
+                else if (k === "dir") out.dir = v;
+            }
+        });
+        return out;
+    }
+
+    async function loadNetworkMap() {
+        var container = document.getElementById("networkMap");
+        if (!container) return;
+        var nodesRes = await apiGet("nodes");
+        var tokensRes = await apiGet("tokens");
+        if (nodesRes.status === 401 || tokensRes.status === 401) return;
+        var nodes = Array.isArray(nodesRes.data) ? nodesRes.data : [];
+        var tokens = Array.isArray(tokensRes.data) ? tokensRes.data : [];
+        var byNode = {};
+        nodes.forEach(function (n) {
+            byNode[n.id] = { node: n, tokens: [] };
+        });
+        tokens.forEach(function (t) {
+            var p = parsePlacement(t.placement);
+            var nid = p.node_id || "1";
+            if (!byNode[nid]) byNode[nid] = { node: { id: nid, hostname: "node_" + nid, ip: "-" }, tokens: [] };
+            byNode[nid].tokens.push({ token: t, path: p.path, name: p.name });
+        });
+        container.innerHTML = Object.keys(byNode).map(function (nid) {
+            var item = byNode[nid];
+            var n = item.node;
+            var list = item.tokens;
+            var statusClass = "status-active";
+            var statusText = "Активен";
+            var hostname = escapeHtml(n.hostname || "node_" + n.id);
+            var ip = escapeHtml(n.ip || "-");
+            var tokensHtml = list.length === 0
+                ? "<div class=\"map-token-empty\">Нет приманок</div>"
+                : list.map(function (x) {
+                    var path = escapeHtml(x.path || "-");
+                    var name = escapeHtml(x.name || x.token.type || "-");
+                    return "<div class=\"map-token-item\"><i class=\"fas fa-honey-pot\"></i> " + name + (path ? " <code>" + path + "</code>" : "") + "</div>";
+                }).join("");
+            return "<div class=\"map-node-card\"><div class=\"map-node-header\"><span class=\"map-node-title\"><i class=\"fas fa-server\"></i> " + hostname + "</span><span class=\"status-badge " + statusClass + "\">" + statusText + "</span></div><div class=\"map-node-meta\">" + ip + "</div><div class=\"map-node-tokens\">" + tokensHtml + "</div></div>";
+        }).join("");
+    }
+
     window.toggleSidebar = function () {
         document.getElementById("sidebar").classList.toggle("collapsed");
         document.getElementById("mainContent").classList.toggle("expanded");
@@ -261,6 +322,7 @@
     window.loadNodes = loadNodes;
     window.loadTokens = loadTokens;
     window.loadEvents = loadEvents;
+    window.loadNetworkMap = loadNetworkMap;
     window.generateToken = generateToken;
     window.logout = logout;
 })();
