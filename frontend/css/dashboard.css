@@ -543,6 +543,42 @@
 }
 
 /* Таблицы */
+.tokens-filters {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+.tokens-filters .filter-input {
+    flex: 1;
+    min-width: 200px;
+    padding: 10px 14px;
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    font-size: 0.9rem;
+    background: var(--bg-secondary);
+}
+.tokens-filters .filter-select {
+    min-width: 140px;
+    padding: 10px 14px;
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    font-size: 0.9rem;
+    background: var(--bg-secondary);
+}
+.tokens-table .sortable {
+    cursor: pointer;
+    user-select: none;
+}
+.tokens-table .sortable:hover {
+    color: var(--primary);
+}
+.tokens-table .sort-icon {
+    margin-left: 4px;
+    font-size: 0.75rem;
+    opacity: 0.7;
+}
+
 .table-container {
     background: var(--bg-secondary);
     border-radius: 16px;

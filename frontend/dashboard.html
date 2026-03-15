@@ -183,14 +183,20 @@
                     <i class="fas fa-sync-alt"></i> Обновить
                 </button>
             </div>
+            <div class="tokens-filters">
+                <input type="text" id="tokensFilterSearch" placeholder="Поиск по размещению или пути..." class="filter-input" oninput="applyTokensFilter()">
+                <select id="tokensFilterType" class="filter-select" onchange="applyTokensFilter()">
+                    <option value="">Все типы</option>
+                </select>
+            </div>
             <div class="table-container">
-                <table>
+                <table class="tokens-table">
                     <thead>
                         <tr>
-                            <th>ID / тип</th>
-                            <th>Размещение</th>
-                            <th>Путь</th>
-                            <th>Создан</th>
+                            <th class="sortable" data-sort="id" title="Сортировка">ID / тип <i class="sort-icon"></i></th>
+                            <th class="sortable" data-sort="placement" title="Сортировка">Размещение <i class="sort-icon"></i></th>
+                            <th class="sortable" data-sort="path" title="Сортировка">Путь <i class="sort-icon"></i></th>
+                            <th class="sortable" data-sort="created_at" title="Сортировка">Создан <i class="sort-icon"></i></th>
                         </tr>
                     </thead>
                     <tbody id="tokensTable"></tbody>

@@ -130,29 +130,102 @@
         tbody.innerHTML = data.map(function (node) {
             return "<tr><td>#" + node.id + "</td><td><strong>" + (node.hostname || "-") + "</strong></td><td>" + (node.ip || "-") + "</td>" +
                 "<td><span class=\"status-badge status-active\"><i class=\"fas fa-circle\" style=\"font-size:0.6rem;margin-right:4px;\"></i> Активен</span></td>" +
-                "<td><button class=\"btn btn-outline\" style=\"padding:4px 8px;\"><i class=\"fas fa-eye\"></i></button></td></tr>";
+                "<td><button type=\"button\" class=\"btn btn-outline\" style=\"padding:4px 8px;\" title=\"Просмотр ноды на карте сети\" onclick=\"showSection('map')\"><i class=\"fas fa-eye\"></i></button></td></tr>";
         }).join("");
+    }
+
+    var tokensData = [];
+    var tokensSort = { field: "created_at", dir: -1 };
+    var tokensFilter = { type: "", search: "" };
+
+    function sortTokensBy(field) {
+        if (tokensSort.field === field) tokensSort.dir = -tokensSort.dir;
+        else { tokensSort.field = field; tokensSort.dir = 1; }
+        renderTokensTable();
+    }
+
+    function applyTokensFilter() {
+        var searchEl = document.getElementById("tokensFilterSearch");
+        var typeEl = document.getElementById("tokensFilterType");
+        tokensFilter.search = (searchEl && searchEl.value) ? searchEl.value.trim().toLowerCase() : "";
+        tokensFilter.type = (typeEl && typeEl.value) ? typeEl.value.trim() : "";
+        renderTokensTable();
+    }
+
+    function renderTokensTable() {
+        var list = tokensData.slice();
+        var search = tokensFilter.search;
+        var typeFilter = tokensFilter.type;
+        if (search) {
+            list = list.filter(function (t) {
+                var placement = (t.placement || "").toLowerCase();
+                var path = (t.path || "").toLowerCase();
+                return placement.indexOf(search) >= 0 || path.indexOf(search) >= 0 || (t.type || "").toLowerCase().indexOf(search) >= 0 || (t.id || "").toLowerCase().indexOf(search) >= 0;
+            });
+        }
+        if (typeFilter) list = list.filter(function (t) { return (t.type || "") === typeFilter; });
+        var field = tokensSort.field;
+        var dir = tokensSort.dir;
+        list.sort(function (a, b) {
+            var va = a[field];
+            var vb = b[field];
+            if (field === "created_at") {
+                va = va ? new Date(va).getTime() : 0;
+                vb = vb ? new Date(vb).getTime() : 0;
+            } else {
+                va = (va || "").toString().toLowerCase();
+                vb = (vb || "").toString().toLowerCase();
+            }
+            if (va < vb) return -dir;
+            if (va > vb) return dir;
+            return 0;
+        });
+        var tbody = document.getElementById("tokensTable");
+        if (!tbody) return;
+        document.getElementById("tokenCount").textContent = tokensData.length;
+        if (list.length === 0) {
+            tbody.innerHTML = "<tr><td colspan=\"4\" style=\"text-align:center;color:var(--text-secondary);\">Нет honeytoken'ов" + (tokensFilter.search || tokensFilter.type ? " по фильтру" : "") + "</td></tr>";
+            return;
+        }
+        tbody.innerHTML = list.map(function (t) {
+            var id = t.id || "-";
+            var type = t.type || "-";
+            var placement = t.placement || "-";
+            var path = t.path || "-";
+            var created = t.created_at ? new Date(t.created_at).toLocaleString() : "-";
+            return "<tr><td><code>" + escapeHtml(id) + "</code> / " + escapeHtml(type) + "</td><td>" + escapeHtml(placement) + "</td><td><code style=\"font-size:0.85em;\">" + escapeHtml(path) + "</code></td><td>" + created + "</td></tr>";
+        }).join("");
+        updateTokensSortIcons();
+    }
+
+    function updateTokensSortIcons() {
+        document.querySelectorAll(".tokens-table thead .sortable").forEach(function (th) {
+            var field = th.getAttribute("data-sort");
+            var icon = th.querySelector(".sort-icon");
+            if (!icon) return;
+            icon.className = "sort-icon fas " + (tokensSort.field === field ? (tokensSort.dir > 0 ? "fa-sort-up" : "fa-sort-down") : "fa-sort");
+        });
     }
 
     async function loadTokens(refresh) {
         const res = await apiGet("tokens");
         if (res.status === 401) return;
-        const data = Array.isArray(res.data) ? res.data : [];
-        document.getElementById("tokenCount").textContent = data.length;
-
-        const tbody = document.getElementById("tokensTable");
-        if (data.length === 0) {
-            tbody.innerHTML = "<tr><td colspan=\"4\" style=\"text-align:center;color:var(--text-secondary);\">Нет honeytoken'ов</td></tr>";
-            return;
+        tokensData = Array.isArray(res.data) ? res.data : [];
+        var typeSelect = document.getElementById("tokensFilterType");
+        if (typeSelect) {
+            var types = [];
+            tokensData.forEach(function (t) {
+                if (t.type && types.indexOf(t.type) < 0) types.push(t.type);
+            });
+            types.sort();
+            typeSelect.innerHTML = "<option value=\"\">Все типы</option>" + types.map(function (x) {
+                return "<option value=\"" + escapeHtml(x) + "\">" + escapeHtml(x) + "</option>";
+            }).join("");
         }
-        tbody.innerHTML = data.map(function (t) {
-            const id = t.id || "-";
-            const type = t.type || "-";
-            const placement = t.placement || "-";
-            const path = t.path || "-";
-            const created = t.created_at ? new Date(t.created_at).toLocaleString() : "-";
-            return "<tr><td><code>" + escapeHtml(id) + "</code> / " + escapeHtml(type) + "</td><td>" + escapeHtml(placement) + "</td><td><code style=\"font-size:0.85em;\">" + escapeHtml(path) + "</code></td><td>" + created + "</td></tr>";
-        }).join("");
+        renderTokensTable();
+        document.querySelectorAll(".tokens-table thead .sortable").forEach(function (th) {
+            th.onclick = function () { sortTokensBy(th.getAttribute("data-sort")); };
+        });
     }
 
     async function loadEvents(refresh) {
@@ -399,5 +472,7 @@
     window.loadNetworkMap = loadNetworkMap;
     window.generateToken = generateToken;
     window.markAllEventsRead = markAllEventsRead;
+    window.sortTokensBy = sortTokensBy;
+    window.applyTokensFilter = applyTokensFilter;
     window.logout = logout;
 })();
