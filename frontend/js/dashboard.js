@@ -1,322 +1,231 @@
-// Состояние приложения
-let token = localStorage.getItem("token");
-if (!token) {
-    window.location = "/";
-}
-
-let ws = null;
-let eventCount = 0;
-let tokenCount = 0;
-
-// Инициализация при загрузке
-document.addEventListener('DOMContentLoaded', () => {
-    loadNodes();
-    loadEvents();
-    loadTokens();
-    initWebSocket();
-    updateStats();
-});
-
-// Тоггл сайдбара
-function toggleSidebar() {
-    const sidebar = document.getElementById('sidebar');
-    const mainContent = document.getElementById('mainContent');
-    sidebar.classList.toggle('collapsed');
-    mainContent.classList.toggle('expanded');
-}
-
-function checkAuth(r) {
-    if (r && r.status === 401) {
-        localStorage.removeItem("token");
-        window.location = "/";
-        return true;
+(function () {
+    if (!getToken()) {
+        window.location.href = "/";
+        return;
     }
-    return false;
-}
 
-// Загрузка нод
-async function loadNodes() {
-    try {
-        let r = await fetch("/api/nodes", {
-            headers: { "Authorization": `Bearer ${token}` }
+    let ws = null;
+    const sections = {
+        dashboard: { title: "Дашборд безопасности", subtitle: "Отслеживайте активность honeytoken'ов в реальном времени" },
+        nodes:     { title: "Ноды", subtitle: "Активные ноды сети" },
+        tokens:    { title: "Honeytokens", subtitle: "Список созданных приманок" },
+        events:    { title: "События", subtitle: "Журнал событий" },
+    };
+
+    document.addEventListener("DOMContentLoaded", function () {
+        document.getElementById("userName").textContent = getUsername();
+        const avatar = document.getElementById("userAvatar");
+        const u = getUsername();
+        avatar.textContent = u ? u.charAt(0).toUpperCase() : "A";
+
+        document.querySelectorAll(".sidebar-nav a[data-section]").forEach(function (a) {
+            a.addEventListener("click", function (e) {
+                e.preventDefault();
+                showSection(a.getAttribute("data-section"));
+            });
         });
-        if (checkAuth(r)) return;
-        let data = await r.json();
-        
-        let tbody = document.getElementById("nodesTable");
+
+        showSection("dashboard");
+        loadNodes();
+        loadTokens();
+        loadEvents();
+        initWebSocket();
+    });
+
+    function showSection(id) {
+        document.querySelectorAll(".section-content").forEach(function (el) {
+            el.classList.toggle("hidden", el.id !== "section-" + id);
+        });
+        document.querySelectorAll(".sidebar-nav a[data-section]").forEach(function (a) {
+            a.classList.toggle("active", a.getAttribute("data-section") === id);
+        });
+        const s = sections[id];
+        if (s) {
+            document.getElementById("pageTitle").textContent = s.title;
+            document.getElementById("pageSubtitle").textContent = s.subtitle;
+        }
+    }
+
+    async function loadNodes(refresh) {
+        const res = await apiGet("nodes");
+        if (res.status === 401) return;
+        const data = Array.isArray(res.data) ? res.data : [];
+        const tbody = document.getElementById("nodesTable");
+        const select = document.getElementById("nodeSelect");
         document.getElementById("nodeCount").textContent = data.length;
-        
+
+        select.innerHTML = data.length
+            ? data.map(function (n) {
+                return "<option value=\"" + (n.id || 1) + "\">" + (n.hostname || "node" + n.id) + " (" + (n.ip || "-") + ")</option>";
+            }).join("")
+            : "<option value=\"1\">agent1 (127.0.0.1)</option>";
+
+        if (document.getElementById("section-nodes").classList.contains("hidden") && !refresh) return;
         if (data.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">Нет активных нод</td></tr>`;
+            tbody.innerHTML = "<tr><td colspan=\"5\" style=\"text-align:center;color:var(--text-secondary);\">Нет данных о нодах</td></tr>";
             return;
         }
-        
-        tbody.innerHTML = data.map(node => `
-            <tr>
-                <td>#${node.id}</td>
-                <td><strong>${node.hostname}</strong></td>
-                <td>${node.ip}</td>
-                <td><span class="status-badge status-active"><i class="fas fa-circle" style="font-size: 0.6rem; margin-right: 4px;"></i> Активен</span></td>
-                <td>${new Date().toLocaleTimeString()}</td>
-                <td>
-                    <button class="btn btn-outline" style="padding: 4px 8px;" onclick="showNodeDetails(${node.id})">
-                        <i class="fas fa-eye"></i>
-                    </button>
-                </td>
-            </tr>
-        `).join('');
-        
-    } catch (e) {
-        console.error("Nodes error:", e);
-        showError("Ошибка загрузки нод");
+        tbody.innerHTML = data.map(function (node) {
+            return "<tr><td>#" + node.id + "</td><td><strong>" + (node.hostname || "-") + "</strong></td><td>" + (node.ip || "-") + "</td>" +
+                "<td><span class=\"status-badge status-active\"><i class=\"fas fa-circle\" style=\"font-size:0.6rem;margin-right:4px;\"></i> Активен</span></td>" +
+                "<td><button class=\"btn btn-outline\" style=\"padding:4px 8px;\"><i class=\"fas fa-eye\"></i></button></td></tr>";
+        }).join("");
     }
-}
 
-// Загрузка событий
-async function loadEvents() {
-    try {
-        let r = await fetch("/api/events", {
-            headers: { "Authorization": `Bearer ${token}` }
-        });
-        if (checkAuth(r)) return;
-        let data = await r.json();
-        
-        let list = document.getElementById("eventsList");
-        eventCount = data.length;
-        document.getElementById("eventCount").textContent = eventCount;
-        
+    async function loadTokens(refresh) {
+        const res = await apiGet("tokens");
+        if (res.status === 401) return;
+        const data = Array.isArray(res.data) ? res.data : [];
+        document.getElementById("tokenCount").textContent = data.length;
+
+        const tbody = document.getElementById("tokensTable");
+        if (document.getElementById("section-tokens").classList.contains("hidden") && !refresh) return;
         if (data.length === 0) {
-            list.innerHTML = '<div style="text-align: center; padding: 40px; color: var(--text-secondary);">Нет событий</div>';
+            tbody.innerHTML = "<tr><td colspan=\"4\" style=\"text-align:center;color:var(--text-secondary);\">Нет honeytoken'ов</td></tr>";
             return;
         }
-        
-        list.innerHTML = data.map(event => createEventElement(event)).join('');
-        
-    } catch (e) {
-        console.error("Events error:", e);
-    }
-}
-
-// Создание элемента события (API: token_id, action, file_path, created_at)
-function createEventElement(event) {
-    const rawDate = event.created_at || event.time;
-    const date = rawDate ? new Date(rawDate) : new Date();
-    const timeStr = date.toLocaleTimeString();
-    const dateStr = date.toLocaleDateString();
-    const action = event.action || event.type || 'event';
-    const tokenId = event.token_id || event.source || '-';
-
-    let icon = 'fa-info-circle';
-    let color = 'var(--primary)';
-    switch (action) {
-        case 'heartbeat':
-            icon = 'fa-heartbeat';
-            color = 'var(--secondary)';
-            break;
-        case 'access':
-        case 'compromise':
-            icon = 'fa-download';
-            color = 'var(--warning)';
-            break;
-        case 'alert':
-            icon = 'fa-exclamation-triangle';
-            color = 'var(--danger)';
-            break;
+        tbody.innerHTML = data.map(function (t) {
+            const id = t.id || "-";
+            const type = t.type || "-";
+            const placement = t.placement || "-";
+            const path = t.path || "-";
+            const created = t.created_at ? new Date(t.created_at).toLocaleString() : "-";
+            return "<tr><td><code>" + escapeHtml(id) + "</code> / " + escapeHtml(type) + "</td><td>" + escapeHtml(placement) + "</td><td><code style=\"font-size:0.85em;\">" + escapeHtml(path) + "</code></td><td>" + created + "</td></tr>";
+        }).join("");
     }
 
-    return `
-        <div class="event-item">
-            <div class="event-icon" style="color: ${color};">
-                <i class="fas ${icon}"></i>
-            </div>
-            <div class="event-content">
-                <div class="event-title">
-                    <strong>${action}</strong> для токена ${tokenId}
-                </div>
-                <div class="event-time">
-                    <i class="far fa-clock" style="margin-right: 4px;"></i>
-                    ${dateStr} ${timeStr}
-                </div>
-            </div>
-            <div class="event-type">${event.file_path || 'N/A'}</div>
-        </div>
-    `;
-}
+    async function loadEvents(refresh) {
+        const res = await apiGet("events");
+        if (res.status === 401) return;
+        const data = Array.isArray(res.data) ? res.data : [];
+        document.getElementById("eventCount").textContent = data.length;
 
-// Загрузка токенов
-async function loadTokens() {
-    try {
-        let r = await fetch("/api/tokens", {
-            headers: { "Authorization": `Bearer ${token}` }
-        });
-        if (checkAuth(r)) return;
-        let data = await r.json();
-        
-        tokenCount = data.length;
-        document.getElementById("tokenCount").textContent = tokenCount;
-        
-    } catch (e) {
-        console.error("Tokens error:", e);
+        const alertCount = data.filter(function (e) { return e.action === "alert" || e.action === "compromise"; }).length;
+        document.getElementById("alertCount").textContent = alertCount;
+        const badge = document.getElementById("sidebarEventBadge");
+        if (badge) badge.textContent = data.length;
+
+        const html = data.length === 0
+            ? "<div style=\"text-align:center;padding:40px;color:var(--text-secondary);\">Нет событий</div>"
+            : data.map(eventRow).join("");
+
+        document.getElementById("eventsList").innerHTML = html;
+        document.getElementById("eventsListFull").innerHTML = html;
     }
-}
 
-// Генерация нового токена
-async function generateToken() {
-    let node = document.getElementById("node").value;
-    let type = document.getElementById("type").value;
-    let name = document.getElementById("tokenName").value;
-    
-    let generateBtn = document.querySelector('.btn-primary');
-    generateBtn.disabled = true;
-    generateBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Генерация...';
-    
-    try {
-        let r = await fetch("/api/generate", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${token}`
-            },
-            body: JSON.stringify({
-                node_id: node,
-                type: type,
-                name: name
-            })
-        });
-        
-        if (checkAuth(r)) return;
-        if (r.status === 200) {
-            showNotification("Honeytoken успешно создан!", "success");
+    function eventRow(event) {
+        const rawDate = event.created_at || event.time;
+        const date = rawDate ? new Date(rawDate) : new Date();
+        const action = event.action || event.type || "event";
+        const tokenId = event.token_id || event.source || "-";
+        let icon = "fa-info-circle", color = "var(--primary)";
+        if (action === "heartbeat") { icon = "fa-heartbeat"; color = "var(--secondary)"; }
+        else if (action === "access" || action === "compromise") { icon = "fa-download"; color = "var(--warning)"; }
+        else if (action === "alert") { icon = "fa-exclamation-triangle"; color = "var(--danger)"; }
+        return "<div class=\"event-item\"><div class=\"event-icon\" style=\"color:" + color + ";\"><i class=\"fas " + icon + "\"></i></div>" +
+            "<div class=\"event-content\"><div class=\"event-title\"><strong>" + escapeHtml(action) + "</strong> для токена " + escapeHtml(tokenId) + "</div>" +
+            "<div class=\"event-time\"><i class=\"far fa-clock\" style=\"margin-right:4px;\"></i>" + date.toLocaleString() + "</div></div>" +
+            "<div class=\"event-type\">" + escapeHtml(event.file_path || "N/A") + "</div></div>";
+    }
+
+    function escapeHtml(s) {
+        if (s == null) return "";
+        var div = document.createElement("div");
+        div.textContent = s;
+        return div.innerHTML;
+    }
+
+    async function generateToken() {
+        var btn = document.getElementById("btnGenerate");
+        var nodeId = document.getElementById("nodeSelect").value;
+        var type = document.getElementById("typeSelect").value;
+        var name = (document.getElementById("tokenName").value || "").trim();
+        btn.disabled = true;
+        btn.innerHTML = "<i class=\"fas fa-spinner fa-spin\"></i> Генерация...";
+        var res = await apiPost("generate", { node_id: nodeId, type: type, name: name });
+        btn.disabled = false;
+        btn.innerHTML = "<i class=\"fas fa-plus\"></i> Сгенерировать";
+        if (res.status === 401) return;
+        if (res.ok) {
+            showNotification("Honeytoken создан", "success");
+            document.getElementById("tokenName").value = "";
             loadTokens();
             loadEvents();
-            document.getElementById("tokenName").value = '';
         } else {
-            let error = await r.json().catch(() => ({}));
-            showNotification("Ошибка: " + (error.detail || "Неизвестная ошибка"), "error");
-        }
-    } catch (e) {
-        showNotification("Ошибка соединения с сервером", "error");
-    } finally {
-        generateBtn.disabled = false;
-        generateBtn.innerHTML = '<i class="fas fa-plus"></i> Сгенерировать';
-    }
-}
-
-// WebSocket подключение
-function initWebSocket() {
-    ws = new WebSocket("ws://" + window.location.host + "/ws/events");
-    
-    ws.onopen = () => {
-        console.log("WebSocket connected");
-        updateConnectionStatus(true);
-    };
-    
-    ws.onmessage = (event) => {
-        console.log("New event:", event.data);
-        let payload = {};
-        try {
-            payload = JSON.parse(event.data);
-        } catch (e) {
-            payload = { action: 'event', token_id: '-', created_at: new Date().toISOString(), file_path: '' };
-        }
-        let list = document.getElementById("eventsList");
-        let wrap = document.createElement('div');
-        wrap.innerHTML = createEventElement(payload);
-        let newEl = wrap.firstChild;
-        if (list.firstChild) {
-            list.insertBefore(newEl, list.firstChild);
-        } else {
-            list.appendChild(newEl);
-        }
-        eventCount++;
-        const ec = document.getElementById("eventCount");
-        if (ec) ec.textContent = eventCount;
-        if (payload.action === 'alert' || payload.action === 'compromise') {
-            const ac = document.getElementById("alertCount");
-            if (ac) ac.textContent = parseInt(ac.textContent || '0', 10) + 1;
-            showNotification('Тревога: компрометация приманки ' + (payload.token_id || ''), 'error');
-        }
-        newEl.style.animation = 'slideIn 0.3s ease';
-    };
-    
-    ws.onerror = (e) => {
-        console.error("WebSocket error:", e);
-        updateConnectionStatus(false);
-    };
-    
-    ws.onclose = () => {
-        console.log("WebSocket disconnected");
-        updateConnectionStatus(false);
-        // Пробуем переподключиться через 5 секунд
-        setTimeout(initWebSocket, 5000);
-    };
-}
-
-// Обновление статуса WebSocket
-function updateConnectionStatus(connected) {
-    let statusEl = document.querySelector('.status-badge');
-    if (statusEl) {
-        if (connected) {
-            statusEl.className = 'status-badge status-active';
-            statusEl.innerHTML = '<i class="fas fa-circle" style="font-size: 0.6rem; margin-right: 4px;"></i> WebSocket подключен';
-        } else {
-            statusEl.className = 'status-badge status-warning';
-            statusEl.innerHTML = '<i class="fas fa-circle" style="font-size: 0.6rem; margin-right: 4px;"></i> WebSocket отключен';
+            var msg = "Ошибка создания токена";
+            if (res.data && res.data.detail) {
+                msg += ": " + (typeof res.data.detail === "string" ? res.data.detail : (Array.isArray(res.data.detail) ? res.data.detail.map(function(d) { return d.msg || d.loc || JSON.stringify(d); }).join(", ") : JSON.stringify(res.data.detail)));
+            }
+            showNotification(msg, "error");
         }
     }
-}
 
-// Обновление статистики
-function updateStats() {
-    // Здесь можно добавить логику обновления статистики
-}
+    function initWebSocket() {
+        var protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        var url = protocol + "//" + window.location.host + "/ws/events";
+        ws = new WebSocket(url);
+        ws.onopen = function () {
+            updateWsStatus(true);
+        };
+        ws.onmessage = function (ev) {
+            var payload = {};
+            try { payload = JSON.parse(ev.data); } catch (e) {}
+            var list = document.getElementById("eventsList");
+            if (list && list.innerHTML.indexOf("spinner") === -1) {
+                var wrap = document.createElement("div");
+                wrap.innerHTML = eventRow(payload);
+                list.insertBefore(wrap.firstChild, list.firstChild);
+            }
+            var ec = document.getElementById("eventCount");
+            if (ec) ec.textContent = parseInt(ec.textContent || "0", 10) + 1;
+            if (payload.action === "alert" || payload.action === "compromise") {
+                var ac = document.getElementById("alertCount");
+                if (ac) ac.textContent = parseInt(ac.textContent || "0", 10) + 1;
+                showNotification("Тревога: " + (payload.token_id || ""), "error");
+            }
+        };
+        ws.onerror = ws.onclose = function () {
+            updateWsStatus(false);
+            setTimeout(initWebSocket, 5000);
+        };
+    }
 
-// Показ уведомления
-function showNotification(message, type = 'info') {
-    // Создаем элемент уведомления
-    const notification = document.createElement('div');
-    notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        padding: 16px 24px;
-        background: ${type === 'success' ? 'var(--secondary)' : type === 'error' ? 'var(--danger)' : 'var(--primary)'};
-        color: white;
-        border-radius: 12px;
-        box-shadow: 0 10px 15px -3px rgba(0,0,0,0.3);
-        z-index: 9999;
-        animation: slideIn 0.3s ease;
-    `;
-    notification.textContent = message;
-    
-    document.body.appendChild(notification);
-    
-    // Удаляем через 3 секунды
-    setTimeout(() => {
-        notification.style.animation = 'slideIn 0.3s ease reverse';
-        setTimeout(() => notification.remove(), 300);
-    }, 3000);
-}
+    function updateWsStatus(connected) {
+        var el = document.getElementById("wsStatus");
+        var text = document.getElementById("wsStatusText");
+        if (!el) return;
+        el.className = "status-badge " + (connected ? "status-active" : "status-warning");
+        if (text) text.textContent = connected ? "WebSocket подключен" : "WebSocket отключен";
+    }
 
-// Показ ошибки
-function showError(message) {
-    showNotification(message, 'error');
-}
+    function showNotification(message, type) {
+        type = type || "info";
+        var bg = type === "success" ? "var(--secondary)" : type === "error" ? "var(--danger)" : "var(--primary)";
+        var n = document.createElement("div");
+        n.style.cssText = "position:fixed;top:20px;right:20px;padding:16px 24px;background:" + bg + ";color:white;border-radius:12px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.3);z-index:9999;";
+        n.textContent = message;
+        document.body.appendChild(n);
+        setTimeout(function () { n.remove(); }, 3000);
+    }
 
-// Детали ноды
-function showNodeDetails(nodeId) {
-    alert(`Детали ноды ${nodeId} (будет реализовано позже)`);
-}
+    function logout() {
+        clearAuth();
+        window.location.href = "/";
+    }
 
-// Выход
-function logout() {
-    localStorage.removeItem("token");
-    window.location = "/";
-}
+    setInterval(function () {
+        loadNodes();
+        loadTokens();
+        loadEvents();
+    }, 30000);
 
-// Автоматическое обновление каждые 30 секунд
-setInterval(() => {
-    loadNodes();
-    loadEvents();
-    loadTokens();
-}, 30000);
+    window.toggleSidebar = function () {
+        document.getElementById("sidebar").classList.toggle("collapsed");
+        document.getElementById("mainContent").classList.toggle("expanded");
+    };
+    window.loadNodes = loadNodes;
+    window.loadTokens = loadTokens;
+    window.loadEvents = loadEvents;
+    window.generateToken = generateToken;
+    window.logout = logout;
+})();

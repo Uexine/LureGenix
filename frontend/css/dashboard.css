@@ -29,6 +29,8 @@
     --transition: all 0.2s ease;
 }
 
+.hidden { display: none !important; }
+
 /* Дашборд - светлая тема */
 .dashboard-body {
     padding: 0;

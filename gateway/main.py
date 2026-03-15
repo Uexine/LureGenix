@@ -73,8 +73,10 @@ async def login(request: Request):
 # ---------- GENERATE (требуется JWT) ----------
 @app.post("/generate")
 @app.post("/api/generate")
-async def generate(data: dict = Body(default=None), _: dict = Depends(verify_token)):
-    if data is None:
+async def generate(request: Request, _: dict = Depends(verify_token)):
+    try:
+        data = await request.json()
+    except Exception:
         data = {}
     result, status = forward_request(TOKEN_SERVICE, "/generate", "POST", data=data)
     if status != 200:

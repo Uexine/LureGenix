@@ -33,6 +33,7 @@ async function login() {
 
         if (data.token) {
             localStorage.setItem('token', data.token);
+            if (data.username) localStorage.setItem('username', data.username);
             // Плавный редирект
             loginBtn.innerHTML = '<span>Успех!</span> <i class="fas fa-check"></i>';
             setTimeout(() => {
