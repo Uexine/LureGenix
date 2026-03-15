@@ -12,6 +12,24 @@
         events:    { title: "События", subtitle: "Журнал событий" },
         map:       { title: "Карта сети", subtitle: "Ноды и приманки на них" },
     };
+    var validSectionIds = ["dashboard", "nodes", "tokens", "events", "map"];
+
+    function getSectionFromPath() {
+        var path = (window.location.pathname || "").replace(/\/$/, "");
+        if (path === "/dashboard" || path === "") return "dashboard";
+        var m = path.match(/\/dashboard\/([a-z]+)/);
+        var id = m ? m[1] : "dashboard";
+        return validSectionIds.indexOf(id) >= 0 ? id : "dashboard";
+    }
+
+    function updateUrlForSection(id, replace) {
+        var path = "/dashboard" + (id === "dashboard" ? "" : "/" + id);
+        if (replace) {
+            history.replaceState({ section: id }, "", path);
+        } else {
+            history.pushState({ section: id }, "", path);
+        }
+    }
 
     document.addEventListener("DOMContentLoaded", function () {
         document.getElementById("userName").textContent = getUsername();
@@ -22,11 +40,24 @@
         document.querySelectorAll(".sidebar-nav a[data-section]").forEach(function (a) {
             a.addEventListener("click", function (e) {
                 e.preventDefault();
-                showSection(a.getAttribute("data-section"));
+                var id = a.getAttribute("data-section");
+                updateUrlForSection(id, false);
+                showSection(id);
             });
         });
 
-        showSection("dashboard");
+        window.addEventListener("popstate", function (e) {
+            var id = (e.state && e.state.section) ? e.state.section : getSectionFromPath();
+            showSection(id);
+        });
+
+        if (window.location.pathname === "/dashboard.html" || window.location.pathname === "/dashboard.html/") {
+            history.replaceState({ section: "dashboard" }, "", "/dashboard");
+        }
+        var initialSection = getSectionFromPath();
+        updateUrlForSection(initialSection, true);
+        showSection(initialSection);
+
         loadNodes();
         loadTokenTypes();
         loadTokens();
@@ -58,6 +89,7 @@
     }
 
     function showSection(id) {
+        if (validSectionIds.indexOf(id) < 0) id = "dashboard";
         document.querySelectorAll(".section-content").forEach(function (el) {
             el.classList.toggle("hidden", el.id !== "section-" + id);
         });

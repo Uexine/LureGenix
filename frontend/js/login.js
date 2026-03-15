@@ -36,7 +36,7 @@ async function login() {
             // Плавный редирект
             loginBtn.innerHTML = '<span>Успех!</span> <i class="fas fa-check"></i>';
             setTimeout(() => {
-                window.location.href = '/dashboard.html';
+                window.location.href = '/dashboard';
             }, 500);
         } else {
             throw new Error('Токен не получен');
