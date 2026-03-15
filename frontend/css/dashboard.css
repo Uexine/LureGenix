@@ -138,8 +138,30 @@
     box-shadow: var(--shadow-sm);
 }
 
+/* Бейдж количества событий — внутри пункта «События», не уезжает в угол */
+.sidebar-nav a {
+    position: relative;
+}
+.sidebar-nav a .badge {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    margin-left: auto;
+    background: var(--danger);
+    color: white;
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 20px;
+    font-weight: 600;
+}
+
 .sidebar.collapsed .sidebar-nav a span {
     display: none;
+}
+.sidebar.collapsed .sidebar-nav a .badge {
+    right: 50%;
+    transform: translate(50%, -50%);
 }
 
 /* Основной контент */

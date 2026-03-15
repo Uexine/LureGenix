@@ -18,9 +18,9 @@ app.add_middleware(
 
 api_key = os.getenv("GROK_API_KEY")
 client = Groq(api_key=api_key) if api_key else None
-
-# Модель Groq для генерации текста (реалистичный контент приманки)
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
+# Базовый каталог для сохранения (можно задать директорию внутри него)
+TOKENS_BASE = os.getenv("TOKENS_BASE", "/tokens")
 
 
 def get_db():
@@ -32,19 +32,43 @@ def get_db():
     )
 
 
-def save_token_to_db(token_id: str, token_type: str, file_path: str, placement: str):
+def save_token_to_db(token_type: str, file_path: str, placement: str):
+    """Пишем в honeytoken_files (placement, created_at для списка)."""
     try:
         conn = get_db()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO honeytokens(token_type, file_path, placement) VALUES(%s,%s,%s)",
+            "INSERT INTO honeytoken_files(token_type, file_path, placement) VALUES(%s,%s,%s)",
             (token_type, file_path, placement or ""),
         )
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
-        print(f"DB save honeytoken error: {e}")
+        print(f"DB save honeytoken_files error: {e}")
+
+
+@app.get("/token-types")
+def token_types():
+    """Список типов приманок из таблицы token_types (для выпадающего списка)."""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT id, name, description FROM token_types ORDER BY id")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [{"id": r[0], "name": r[1], "description": r[2] or ""} for r in rows]
+    except Exception as e:
+        print(f"token_types error: {e}")
+    return [
+        {"id": 1, "name": "ssh_key", "description": "Приватный SSH-ключ"},
+        {"id": 2, "name": "env_file", "description": "Файл .env"},
+        {"id": 3, "name": "api_key", "description": "Ключ API"},
+        {"id": 4, "name": "password", "description": "Пароль"},
+        {"id": 5, "name": "pdf", "description": "PDF"},
+        {"id": 6, "name": "docx", "description": "Word"},
+    ]
 
 
 @app.post("/generate")
@@ -53,10 +77,18 @@ def generate(data: dict):
     file_type = (data.get("type") or "txt").lower()
     node_id = data.get("node_id") or ""
     name = data.get("name") or ""
+    directory = (data.get("directory") or "").strip().strip("/")
 
-    os.makedirs("/tokens", exist_ok=True)
+    base = os.path.normpath(TOKENS_BASE)
+    if directory:
+        save_dir = os.path.normpath(os.path.join(base, directory))
+        if not save_dir.startswith(base):
+            save_dir = base
+    else:
+        save_dir = base
+    os.makedirs(save_dir, exist_ok=True)
 
-    if file_type in ("ssh_key", "env"):
+    if file_type in ("ssh_key", "env", "env_file"):
         content = generate_env()
     elif file_type == "password":
         content = generate_passwords()
@@ -80,27 +112,30 @@ def generate(data: dict):
     ext = "txt"
     if file_type in ("pdf", "docx"):
         ext = file_type
-    elif file_type in ("ssh_key", "env"):
-        ext = "env" if file_type == "env" else "txt"
+    elif file_type in ("ssh_key", "env", "env_file"):
+        ext = "env" if file_type == "env_file" else "txt"
 
     filename = f"{file_type}_{token_id}.{ext}"
-    path = f"/tokens/{filename}"
+    path = os.path.join(save_dir, filename)
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
 
-    placement = f"node:{node_id}" + (f",name:{name}" if name else "")
-    save_token_to_db(token_id, file_type, path, placement)
+    placement = f"node:{node_id}" + (f", name:{name}" if name else "")
+    if directory:
+        placement = (placement + f", dir:{directory}").strip(", ")
+    save_token_to_db(file_type, path, placement)
 
     return {"token_id": token_id, "file": path, "node_id": node_id, "type": file_type}
 
 
 @app.get("/tokens")
 def list_tokens():
+    """Список из honeytoken_files (placement, created_at заполнены)."""
     try:
         conn = get_db()
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, token_type, file_path, placement, created_at FROM honeytokens ORDER BY id DESC LIMIT 500"
+            "SELECT id, token_type, file_path, placement, created_at FROM honeytoken_files ORDER BY id DESC LIMIT 500"
         )
         rows = cur.fetchall()
         cur.close()
@@ -108,7 +143,6 @@ def list_tokens():
         out = []
         for r in rows:
             path = r[2] or ""
-            # token_id из имени файла: /tokens/type_uuid.ext
             token_id = ""
             if path:
                 basename = os.path.basename(path)
@@ -125,11 +159,12 @@ def list_tokens():
         return out
     except Exception as e:
         print(f"DB tokens error: {e}")
-    # Fallback: список по файлам
     import glob
-    files = glob.glob("/tokens/*.*")
+    files = glob.glob(os.path.join(TOKENS_BASE, "*.*")) + glob.glob(os.path.join(TOKENS_BASE, "*", "*.*"))
     tokens = []
     for f in files:
+        if not os.path.isfile(f):
+            continue
         basename = os.path.basename(f)
         parts = basename.split("_", 1)
         if len(parts) == 2:
@@ -138,5 +173,5 @@ def list_tokens():
         else:
             token_type = "unknown"
             token_id = basename
-        tokens.append({"id": token_id, "type": token_type, "path": f})
+        tokens.append({"id": token_id, "type": token_type, "path": f, "placement": "", "created_at": None})
     return tokens

@@ -122,6 +122,14 @@ async def tokens(_: dict = Depends(verify_token)):
         raise HTTPException(status_code=status, detail=result)
     return result
 
+@app.get("/token-types")
+@app.get("/api/token-types")
+async def token_types(_: dict = Depends(verify_token)):
+    result, status = forward_request(TOKEN_SERVICE, "/token-types", "GET")
+    if status != 200:
+        raise HTTPException(status_code=status, detail=result)
+    return result
+
 # ---------- NODES (из discovery_service или заглушка) ----------
 @app.get("/nodes")
 @app.get("/api/nodes")

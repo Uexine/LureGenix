@@ -108,14 +108,18 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Тип</label>
+                    <label>Тип приманки</label>
                     <select id="typeSelect">
                         <option value="ssh_key">SSH ключ</option>
-                        <option value="env">.env</option>
+                        <option value="env_file">.env</option>
                         <option value="password">Пароль</option>
                         <option value="pdf">PDF</option>
                         <option value="docx">Word</option>
                     </select>
+                </div>
+                <div class="form-group">
+                    <label>Директория для сохранения (опц.)</label>
+                    <input type="text" id="tokenDirectory" placeholder="например: production или clients/alfa">
                 </div>
                 <div class="form-group">
                     <label>Название (опц.)</label>

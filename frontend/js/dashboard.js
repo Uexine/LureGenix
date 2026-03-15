@@ -27,10 +27,24 @@
 
         showSection("dashboard");
         loadNodes();
+        loadTokenTypes();
         loadTokens();
         loadEvents();
         initWebSocket();
     });
+
+    async function loadTokenTypes() {
+        const res = await apiGet("token-types");
+        if (res.status === 401 || !res.ok) return;
+        const list = Array.isArray(res.data) ? res.data : [];
+        const select = document.getElementById("typeSelect");
+        if (!select) return;
+        select.innerHTML = list.length
+            ? list.map(function (t) {
+                return "<option value=\"" + escapeHtml(t.name) + "\">" + escapeHtml(t.description || t.name) + "</option>";
+            }).join("")
+            : "<option value=\"ssh_key\">SSH ключ</option><option value=\"env_file\">.env</option><option value=\"password\">Пароль</option><option value=\"pdf\">PDF</option><option value=\"docx\">Word</option>";
+    }
 
     function showSection(id) {
         document.querySelectorAll(".section-content").forEach(function (el) {
@@ -141,15 +155,19 @@
         var nodeId = document.getElementById("nodeSelect").value;
         var type = document.getElementById("typeSelect").value;
         var name = (document.getElementById("tokenName").value || "").trim();
+        var directory = (document.getElementById("tokenDirectory") ? document.getElementById("tokenDirectory").value || "" : "").trim();
         btn.disabled = true;
         btn.innerHTML = "<i class=\"fas fa-spinner fa-spin\"></i> Генерация...";
-        var res = await apiPost("generate", { node_id: nodeId, type: type, name: name });
+        var payload = { node_id: nodeId, type: type, name: name };
+        if (directory) payload.directory = directory;
+        var res = await apiPost("generate", payload);
         btn.disabled = false;
         btn.innerHTML = "<i class=\"fas fa-plus\"></i> Сгенерировать";
         if (res.status === 401) return;
         if (res.ok) {
             showNotification("Honeytoken создан", "success");
-            document.getElementById("tokenName").value = "";
+            if (document.getElementById("tokenName")) document.getElementById("tokenName").value = "";
+            if (document.getElementById("tokenDirectory")) document.getElementById("tokenDirectory").value = "";
             loadTokens();
             loadEvents();
         } else {
