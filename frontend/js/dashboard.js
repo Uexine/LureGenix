@@ -131,8 +131,11 @@
         const alertCount = data.filter(function (e) { return e.action === "alert" || e.action === "compromise"; }).length;
         document.getElementById("alertCount").textContent = alertCount;
 
-        var unreadRes = await apiGet("events/unread_count");
-        var unreadCount = (unreadRes.ok && unreadRes.data && typeof unreadRes.data.count === "number") ? unreadRes.data.count : data.length;
+        var unreadCount = data.length;
+        try {
+            var unreadRes = await apiGet("events/unread_count");
+            if (unreadRes.ok && unreadRes.data && typeof unreadRes.data.count === "number") unreadCount = unreadRes.data.count;
+        } catch (e) { /* старый бэкенд без unread_count — используем data.length или 0 */ unreadCount = 0; }
         var badge = document.getElementById("sidebarEventBadge");
         if (badge) {
             badge.textContent = unreadCount;
@@ -164,7 +167,7 @@
     }
 
     async function markAllEventsRead() {
-        var res = await apiPut("events/read_all", {});
+        var res = await (window.apiPut || apiPut || function (path, body) { return api(path, { method: "PUT", body: body || {} }); })("events/read_all", {});
         if (res.status === 401) return;
         if (res.ok) {
             showNotification("Все события отмечены прочитанными", "success");

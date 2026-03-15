@@ -15,7 +15,7 @@ async function login() {
     loginBtn.innerHTML = '<span>Вход...</span> <i class="fas fa-spinner fa-spin"></i>';
 
     try {
-        console.log('Sending login request...');
+        // Пароль передаётся только в теле запроса; в production обязательно использовать HTTPS
         const response = await fetch('/api/login', {
             method: 'POST',
             headers: {
@@ -25,7 +25,6 @@ async function login() {
         });
 
         const data = await response.json();
-        console.log('Response:', response.status, data);
 
         if (!response.ok) {
             throw new Error(data.detail || 'Ошибка входа');

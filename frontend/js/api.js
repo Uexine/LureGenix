@@ -71,3 +71,11 @@ async function apiPost(path, body) {
 async function apiPut(path, body) {
     return api(path, { method: "PUT", body: body || {} });
 }
+
+// Глобально для скриптов, подключаемых после api.js (на случай кэша)
+if (typeof window !== "undefined") {
+    window.apiPut = apiPut;
+    window.apiGet = apiGet;
+    window.apiPost = apiPost;
+    window.api = api;
+}

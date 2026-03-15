@@ -67,7 +67,7 @@ def health():
     return {"status": "ok"}
 
 
-# ---------- LOGIN (публичный) ----------
+# ---------- LOGIN (публичный). Тело запроса не логировать — содержит пароль. В production — только HTTPS. ----------
 @app.post("/login")
 @app.post("/api/login")
 async def login(request: Request):

@@ -32,6 +32,7 @@ def get_db():
 def login(data: dict):
     username = (data.get("username") or "").strip().lower()
     password = data.get("password") or ""
+    # Пароль не логировать; проверка только через bcrypt.verify
 
     if not username:
         raise HTTPException(status_code=400, detail="Username required")
