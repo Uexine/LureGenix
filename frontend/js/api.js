@@ -67,3 +67,7 @@ async function apiGet(path) {
 async function apiPost(path, body) {
     return api(path, { method: "POST", body });
 }
+
+async function apiPut(path, body) {
+    return api(path, { method: "PUT", body: body || {} });
+}

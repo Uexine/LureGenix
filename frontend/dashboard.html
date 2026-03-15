@@ -202,9 +202,14 @@
         <div class="section-content hidden" id="section-events">
             <div class="section-header">
                 <h2>Все события</h2>
-                <button class="btn btn-outline" onclick="loadEvents(true)">
-                    <i class="fas fa-sync-alt"></i> Обновить
-                </button>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <button class="btn btn-outline" onclick="markAllEventsRead()" title="Отметить все прочитанными">
+                        <i class="fas fa-check-double"></i> Прочитано
+                    </button>
+                    <button class="btn btn-outline" onclick="loadEvents(true)">
+                        <i class="fas fa-sync-alt"></i> Обновить
+                    </button>
+                </div>
             </div>
             <div class="events-list" id="eventsListFull"></div>
         </div>

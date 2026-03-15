@@ -31,6 +31,8 @@ def forward_request(service_url: str, path: str, method: str, data=None, headers
             resp = requests.get(f"{service_url}{path}", headers=headers, timeout=5)
         elif method == "POST":
             resp = requests.post(f"{service_url}{path}", json=data, headers=headers, timeout=5)
+        elif method == "PUT":
+            resp = requests.put(f"{service_url}{path}", json=data, headers=headers, timeout=5)
         else:
             raise HTTPException(status_code=405, detail="Method not allowed")
         if not resp.content:
@@ -111,9 +113,36 @@ async def events(_: dict = Depends(verify_token)):
             return []
         return result if isinstance(result, list) else []
     except HTTPException:
-        return []  # при недоступности event_service отдаём пустой список, чтобы дашборд не падал
+        return []
     except Exception:
         return []
+
+
+@app.get("/api/events/unread_count")
+async def events_unread_count(_: dict = Depends(verify_token)):
+    try:
+        result, status = forward_request(EVENT_SERVICE, "/events/unread_count", "GET")
+        if status == 200 and isinstance(result, dict):
+            return result
+        return {"count": 0}
+    except Exception:
+        return {"count": 0}
+
+
+@app.put("/api/events/{event_id}/read")
+async def event_mark_read(event_id: int, _: dict = Depends(verify_token)):
+    result, status = forward_request(EVENT_SERVICE, f"/events/{event_id}/read", "PUT")
+    if status != 200:
+        raise HTTPException(status_code=status, detail=result)
+    return result
+
+
+@app.put("/api/events/read_all")
+async def events_mark_all_read(_: dict = Depends(verify_token)):
+    result, status = forward_request(EVENT_SERVICE, "/events/read_all", "PUT")
+    if status != 200:
+        raise HTTPException(status_code=status, detail=result)
+    return result
 
 
 # ---------- WebSocket (прокси к event_service, чтобы /ws/events работал и через gateway, и через nginx) ----------

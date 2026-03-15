@@ -70,6 +70,10 @@
             document.getElementById("pageSubtitle").textContent = s.subtitle;
         }
         if (id === "map") loadNetworkMap();
+        if (id === "events") {
+            loadEvents();
+            setTimeout(function () { markAllEventsRead(); }, 400);
+        }
     }
 
     async function loadNodes(refresh) {
@@ -126,10 +130,13 @@
 
         const alertCount = data.filter(function (e) { return e.action === "alert" || e.action === "compromise"; }).length;
         document.getElementById("alertCount").textContent = alertCount;
+
+        var unreadRes = await apiGet("events/unread_count");
+        var unreadCount = (unreadRes.ok && unreadRes.data && typeof unreadRes.data.count === "number") ? unreadRes.data.count : data.length;
         var badge = document.getElementById("sidebarEventBadge");
         if (badge) {
-            badge.textContent = data.length;
-            badge.style.display = data.length > 0 ? "" : "none";
+            badge.textContent = unreadCount;
+            badge.style.display = unreadCount > 0 ? "" : "none";
         }
 
         const html = data.length === 0
@@ -144,15 +151,25 @@
         const rawDate = event.created_at || event.time;
         const date = rawDate ? new Date(rawDate) : new Date();
         const action = event.action || event.type || "event";
-        const tokenId = event.token_id || event.source || "-";
+        var displayName = (event.source_hostname && event.source_hostname.trim()) ? event.source_hostname.trim() : (event.token_id || event.source || "-");
         let icon = "fa-info-circle", color = "var(--primary)";
         if (action === "heartbeat") { icon = "fa-heartbeat"; color = "var(--secondary)"; }
         else if (action === "access" || action === "compromise") { icon = "fa-download"; color = "var(--warning)"; }
         else if (action === "alert") { icon = "fa-exclamation-triangle"; color = "var(--danger)"; }
-        return "<div class=\"event-item\"><div class=\"event-icon\" style=\"color:" + color + ";\"><i class=\"fas " + icon + "\"></i></div>" +
-            "<div class=\"event-content\"><div class=\"event-title\"><strong>" + escapeHtml(action) + "</strong> для токена " + escapeHtml(tokenId) + "</div>" +
+        var readClass = (event.read_at) ? " event-item-read" : "";
+        return "<div class=\"event-item" + readClass + "\" data-event-id=\"" + (event.id || "") + "\"><div class=\"event-icon\" style=\"color:" + color + ";\"><i class=\"fas " + icon + "\"></i></div>" +
+            "<div class=\"event-content\"><div class=\"event-title\"><strong>" + escapeHtml(action) + "</strong> для " + escapeHtml(displayName) + "</div>" +
             "<div class=\"event-time\"><i class=\"far fa-clock\" style=\"margin-right:4px;\"></i>" + date.toLocaleString() + "</div></div>" +
             "<div class=\"event-type\">" + escapeHtml(event.file_path || "N/A") + "</div></div>";
+    }
+
+    async function markAllEventsRead() {
+        var res = await apiPut("events/read_all", {});
+        if (res.status === 401) return;
+        if (res.ok) {
+            showNotification("Все события отмечены прочитанными", "success");
+            loadEvents();
+        }
     }
 
     function escapeHtml(s) {

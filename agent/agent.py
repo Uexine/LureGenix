@@ -34,7 +34,7 @@ def register_node():
         logger.warning("Register failed: %s", e)
 
 
-def send_event(token_id: str, action: str, file_path: str = ""):
+def send_event(token_id: str, action: str, file_path: str = "", source_hostname: str = ""):
     """Отправка события в event_service (heartbeat, alert при компрометации)."""
     try:
         r = requests.post(
@@ -43,6 +43,7 @@ def send_event(token_id: str, action: str, file_path: str = ""):
                 "token_id": token_id,
                 "action": action,
                 "file_path": file_path or "",
+                "source_hostname": source_hostname or NODE_HOSTNAME,
             },
             timeout=5,
         )

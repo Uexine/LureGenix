@@ -142,9 +142,12 @@ CREATE TABLE IF NOT EXISTS event_log (
     token_id TEXT,
     action TEXT,
     file_path TEXT,
+    source_hostname TEXT,
+    read_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON event_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_event_log_read_at ON event_log(read_at);
 
 -- Таблица для лога созданных файлов-приманок (placement, created_at для списка в админке)
 CREATE TABLE IF NOT EXISTS honeytoken_files (

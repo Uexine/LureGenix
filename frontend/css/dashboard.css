@@ -621,6 +621,13 @@ tr:hover td {
     background: var(--bg-tertiary);
 }
 
+.event-item-read {
+    opacity: 0.85;
+}
+.event-item-read .event-title {
+    color: var(--text-secondary);
+}
+
 /* Карта сети */
 .map-subtitle {
     color: var(--text-secondary);
