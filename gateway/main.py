@@ -1,9 +1,9 @@
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, HTTPHeader
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import requests
 import os
-from jose import jwt, JWTError
+import jwt
 
 app = FastAPI()
 
@@ -39,9 +39,14 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     if not credentials:
         raise HTTPException(status_code=401, detail="Authorization header missing")
     try:
-        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
+        payload = jwt.decode(
+            credentials.credentials,
+            JWT_SECRET,
+            algorithms=["HS256"],
+            options={"verify_exp": True},
+        )
         return payload
-    except JWTError:
+    except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
