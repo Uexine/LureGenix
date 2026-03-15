@@ -106,10 +106,7 @@
             document.getElementById("pageSubtitle").textContent = s.subtitle;
         }
         if (id === "map") loadNetworkMap();
-        if (id === "events") {
-            loadEvents();
-            setTimeout(function () { markAllEventsRead(); }, 400);
-        }
+        if (id === "events") loadEvents();
     }
 
     async function loadNodes(refresh) {
