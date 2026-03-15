@@ -23,6 +23,14 @@ docker compose up --build
 4. Откройте в браузере: **http://localhost:8080**
 5. Вход по умолчанию: **admin** / **password**
 
+Если при входе admin/password возвращается **401**, сбросьте пароль в БД (например, после обновления кода или старой БД):
+
+```bash
+docker exec -i luregenix-postgres-1 psql -U admin -d luregenix < db/update_admin_password.sql
+```
+
+Либо пересоздайте базу с нуля: `docker compose down -v`, затем снова `docker compose up -d`.
+
 ## Переменные окружения (.env)
 
 ```env
