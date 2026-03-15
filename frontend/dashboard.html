@@ -118,28 +118,31 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Каталог сохранения</label>
-                    <input type="text" id="tokenSavePath" placeholder="любой путь: production, keys/eu, /var/app/secrets">
-                    <small style="color: var(--text-secondary);">Папка, куда сохранить файл приманки (относительно базового каталога или полный путь)</small>
-                </div>
-                <div class="form-group">
-                    <label>Путь на ноде (размещение в контейнере / сети)</label>
-                    <input type="text" id="tokenNodePath" placeholder="/home/app/.ssh или /secrets/.env">
-                    <small style="color: var(--text-secondary);">Куда разместить приманку на выбранной ноде (Docker или удалённый хост)</small>
-                </div>
-                <div class="form-group">
                     <label>Название (опц.)</label>
                     <input type="text" id="tokenName" placeholder="production-db-key">
                 </div>
-                <button class="btn btn-primary" id="btnGenerate" onclick="generateToken()">
-                    <i class="fas fa-plus"></i> Сгенерировать
-                </button>
+                <div class="form-group form-group-action">
+                    <label class="form-label-invisible">Действие</label>
+                    <button class="btn btn-primary btn-generate" id="btnGenerate" onclick="generateToken()">
+                        <i class="fas fa-plus"></i> Сгенерировать
+                    </button>
+                </div>
+                <div class="form-group form-group-full">
+                    <label>Каталог сохранения</label>
+                    <input type="text" id="tokenSavePath" placeholder="production, keys/eu или /var/app/secrets">
+                    <span class="form-hint">Папка для файла приманки (относительно базового каталога или полный путь)</span>
+                </div>
+                <div class="form-group form-group-full">
+                    <label>Путь на ноде</label>
+                    <input type="text" id="tokenNodePath" placeholder="/home/app/.ssh или /secrets/.env">
+                    <span class="form-hint">Куда разместить приманку на ноде (Docker или удалённый хост)</span>
+                </div>
             </div>
 
-            <div class="section-header" style="margin-top: 24px;">
+            <div class="section-header events-section-header">
                 <h2>Последние события</h2>
-                <span class="status-badge status-active" id="wsStatus">
-                    <i class="fas fa-circle" style="font-size: 0.6rem; margin-right: 4px;"></i>
+                <span class="status-badge status-active ws-badge" id="wsStatus" title="Статус подключения в реальном времени">
+                    <i class="fas fa-circle" style="font-size: 0.5rem; margin-right: 5px;"></i>
                     <span id="wsStatusText">WebSocket...</span>
                 </span>
             </div>

@@ -169,9 +169,10 @@
 /* Основной контент */
 .main-content {
     margin-left: var(--sidebar-width);
-    padding: 24px;
+    padding: 24px 28px;
     transition: var(--transition);
     min-height: 100vh;
+    box-sizing: border-box;
 }
 
 .main-content.expanded {
@@ -442,25 +443,55 @@
     border-radius: 16px;
     padding: 24px;
     border: 1px solid var(--border-light);
-    display: flex;
-    gap: 16px;
-    flex-wrap: wrap;
-    align-items: flex-end;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr) auto;
+    gap: 20px 24px;
+    align-items: end;
     box-shadow: var(--shadow-sm);
     margin-bottom: 24px;
 }
 
 .form-group {
-    flex: 1;
-    min-width: 180px;
+    min-width: 0;
+}
+
+.form-group-full {
+    grid-column: 1 / -1;
+}
+
+.form-group-action {
+    display: flex;
+    align-items: flex-end;
+}
+
+.form-group-action .btn-generate {
+    height: 46px;
+    padding: 0 20px;
+    white-space: nowrap;
+}
+
+.form-label-invisible {
+    visibility: hidden;
+    height: 0;
+    margin: 0;
+    overflow: hidden;
+    display: block;
 }
 
 .form-group label {
     display: block;
     color: var(--text-secondary);
-    margin-bottom: 6px;
+    margin-bottom: 8px;
     font-size: 0.9rem;
     font-weight: 500;
+}
+
+.form-hint {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.8rem;
+    color: var(--text-light);
+    line-height: 1.4;
 }
 
 .form-group select,
@@ -473,6 +504,7 @@
     color: var(--text-primary);
     font-size: 0.95rem;
     transition: var(--transition);
+    box-sizing: border-box;
 }
 
 .form-group select:hover,
@@ -487,6 +519,15 @@
     border-color: var(--primary);
     background: var(--bg-secondary);
     box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+/* Заголовок блока событий на дашборде */
+.events-section-header {
+    margin-top: 28px;
+}
+
+.ws-badge {
+    font-size: 0.8rem;
 }
 
 /* Таблицы */
@@ -743,12 +784,21 @@ tr:hover td {
     }
     
     .create-token-form {
-        flex-direction: column;
-        align-items: stretch;
+        grid-template-columns: 1fr;
     }
-    
-    .form-group {
-        min-width: 100%;
+
+    .form-group-full,
+    .form-group-action {
+        grid-column: 1;
+    }
+
+    .form-group-action {
+        order: 10;
+    }
+
+    .form-group-action .btn-generate {
+        width: 100%;
+        height: 46px;
     }
     
     .user-info {
