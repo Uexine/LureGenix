@@ -158,12 +158,21 @@
     border: none;
 }
 
-.sidebar.collapsed .sidebar-nav a span {
+.sidebar.collapsed .sidebar-nav a span:not(.sidebar-event-badge) {
     display: none;
 }
+/* При свёрнутой панели бейдж уведомлений остаётся видимым рядом с иконкой колокола */
 .sidebar.collapsed .sidebar-nav a .sidebar-event-badge {
-    right: 50% !important;
-    transform: translate(50%, -50%) !important;
+    right: 6px !important;
+    transform: translateY(-50%) !important;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    box-sizing: border-box;
 }
 
 /* Основной контент */
