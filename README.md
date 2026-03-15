@@ -62,9 +62,13 @@ curl -X POST http://localhost:8080/api/admins \
 - **gateway** — единая точка входа, проверка JWT, проксирование на сервисы
 - **auth_service** — логин по БД, выдача JWT; создание админов
 - **honeytoken_service** — генерация приманок (random + Groq для pdf/docx), запись в БД и в `/tokens`
-- **event_service** — приём событий (heartbeat, alert), хранение в БД, рассылка по WebSocket
-- **agent** — демо-агент ноды: отправляет heartbeat раз в 60 сек
-- **postgres** — БД (admins, honeytokens, events)
+- **event_service** — приём событий (heartbeat, alert), хранение в БД, рассылка по WebSocket; список нод `GET /nodes`, регистрация нод `POST /register`
+- **agent** — при старте регистрирует ноду (`POST /register`), затем отправляет heartbeat; при компрометации можно вызвать `send_compromise(token_id, file_path)` → событие `action: alert` → уведомление в дашборде
+- **postgres** — БД (admins, honeytokens, events, nodes). Файл `db/02_nodes.sql` создаёт таблицу `nodes`, если её нет.
+
+**Обнаружение нод:** агент при запуске вызывает `POST /api/register` с `hostname` и `ip`; дашборд получает список нод через `GET /api/nodes` (данные из таблицы `nodes`).
+
+**Уведомления о компрометации:** при событии с `action: alert` или `compromise` дашборд показывает всплывающее уведомление и обновляет счётчик «Тревоги»; события приходят в реальном времени по WebSocket `/ws/events`.
 
 ## Типы приманок
 

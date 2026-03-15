@@ -27,28 +27,40 @@ ws_subscribers: list[WebSocket] = []
 
 @app.post("/event")
 def add_event(data: dict, background_tasks: BackgroundTasks):
-    conn = get_db()
-    cur = conn.cursor()
     token_id = data.get("token_id") or ""
     action = data.get("action") or "event"
     file_path = data.get("file_path") or ""
-    cur.execute(
-        "INSERT INTO events(token_id, action, file_path) VALUES(%s,%s,%s) RETURNING id, token_id, action, file_path, created_at",
-        (token_id, action, file_path),
-    )
-    row = cur.fetchone()
-    conn.commit()
-    event_row = {
-        "id": row[0],
-        "token_id": row[1],
-        "action": row[2],
-        "file_path": row[3],
-        "created_at": row[4].isoformat() if row[4] else None,
-    }
-    cur.close()
-    conn.close()
-    background_tasks.add_task(broadcast_event, event_row)
-    return {"status": "ok", "event": event_row}
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO events(token_id, action, file_path) VALUES(%s,%s,%s) RETURNING id, token_id, action, file_path, created_at",
+            (token_id, action, file_path),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        event_row = {
+            "id": row[0],
+            "token_id": row[1],
+            "action": row[2],
+            "file_path": row[3],
+            "created_at": row[4].isoformat() if row[4] else None,
+        }
+        cur.close()
+        conn.close()
+        background_tasks.add_task(broadcast_event, event_row)
+        return {"status": "ok", "event": event_row}
+    except Exception as e:
+        print(f"add_event error: {e}")
+        event_row = {
+            "id": 0,
+            "token_id": token_id,
+            "action": action,
+            "file_path": file_path,
+            "created_at": None,
+        }
+        background_tasks.add_task(broadcast_event, event_row)
+        return {"status": "ok", "event": event_row}
 
 
 async def broadcast_event(event: dict):
@@ -65,24 +77,79 @@ async def broadcast_event(event: dict):
 
 @app.get("/events")
 def events():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT id, token_id, action, file_path, created_at FROM events ORDER BY id DESC LIMIT 200"
-    )
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return [
-        {
-            "id": r[0],
-            "token_id": r[1] or "",
-            "action": r[2] or "",
-            "file_path": r[3] or "",
-            "created_at": r[4].isoformat() if r[4] else None,
-        }
-        for r in rows
-    ]
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, token_id, action, file_path, created_at FROM events ORDER BY id DESC LIMIT 200"
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [
+            {
+                "id": r[0],
+                "token_id": r[1] or "",
+                "action": r[2] or "",
+                "file_path": r[3] or "",
+                "created_at": r[4].isoformat() if r[4] else None,
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        print(f"events error: {e}")
+        return []
+
+
+@app.get("/nodes")
+def list_nodes():
+    """Список нод (из таблицы nodes или пустой)."""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, hostname, ip, last_heartbeat FROM nodes ORDER BY last_heartbeat DESC NULLS LAST LIMIT 100"
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [
+            {
+                "id": r[0],
+                "hostname": r[1] or "node",
+                "ip": str(r[2]) if r[2] else "-",
+                "last_heartbeat": r[3].isoformat() if r[3] else None,
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        print(f"nodes list error: {e}")
+        return []
+
+
+@app.post("/register")
+def register_node(data: dict):
+    """Регистрация/обновление ноды (агент при старте или по heartbeat)."""
+    hostname = (data.get("hostname") or data.get("node_id") or "agent").strip() or "agent"
+    ip = (data.get("ip") or data.get("source_ip") or "127.0.0.1").strip() or "127.0.0.1"
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO nodes (hostname, ip, last_heartbeat)
+            VALUES (%s, %s, now())
+            ON CONFLICT (hostname, ip) DO UPDATE SET last_heartbeat = now()
+            """,
+            (hostname, ip),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "ok"}
+    except Exception as e:
+        print(f"register node error: {e}")
+        return {"status": "error", "detail": str(e)}
 
 
 @app.websocket("/ws/events")

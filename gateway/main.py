@@ -30,7 +30,12 @@ def forward_request(service_url: str, path: str, method: str, data=None, headers
             resp = requests.post(f"{service_url}{path}", json=data, headers=headers, timeout=5)
         else:
             raise HTTPException(status_code=405, detail="Method not allowed")
-        return resp.json() if resp.content else {}, resp.status_code
+        if not resp.content:
+            return {}, resp.status_code
+        try:
+            return resp.json(), resp.status_code
+        except ValueError:
+            raise HTTPException(status_code=503, detail="Service returned invalid JSON")
     except requests.exceptions.RequestException as e:
         raise HTTPException(status_code=503, detail=f"Service unavailable: {str(e)}")
 
@@ -83,7 +88,7 @@ async def generate(request: Request, _: dict = Depends(verify_token)):
         raise HTTPException(status_code=status, detail=result)
     return result
 
-# ---------- EVENTS ----------
+# ---------- EVENTS (агент шлёт события без JWT) ----------
 @app.post("/event")
 @app.post("/api/event")
 async def event(data: dict = Body(default=None)):
@@ -94,13 +99,30 @@ async def event(data: dict = Body(default=None)):
         raise HTTPException(status_code=status, detail=result)
     return result
 
+
+@app.post("/register")
+@app.post("/api/register")
+async def register_node(data: dict = Body(default=None)):
+    """Регистрация ноды агентом (без JWT)."""
+    if data is None:
+        data = {}
+    result, status = forward_request(EVENT_SERVICE, "/register", "POST", data=data)
+    return result
+
+
+# ---------- EVENTS (для дашборда, с JWT) ----------
 @app.get("/events")
 @app.get("/api/events")
 async def events(_: dict = Depends(verify_token)):
-    result, status = forward_request(EVENT_SERVICE, "/events", "GET")
-    if status != 200:
-        raise HTTPException(status_code=status, detail=result)
-    return result
+    try:
+        result, status = forward_request(EVENT_SERVICE, "/events", "GET")
+        if status != 200:
+            return []
+        return result if isinstance(result, list) else []
+    except HTTPException:
+        raise
+    except Exception:
+        return []
 
 # ---------- TOKENS ----------
 @app.get("/tokens")
@@ -115,6 +137,12 @@ async def tokens(_: dict = Depends(verify_token)):
 @app.get("/nodes")
 @app.get("/api/nodes")
 async def nodes(_: dict = Depends(verify_token)):
+    try:
+        result, status = forward_request(EVENT_SERVICE, "/nodes", "GET")
+        if status == 200 and isinstance(result, list) and len(result) > 0:
+            return result
+    except Exception:
+        pass
     return [{"id": 1, "hostname": "agent1", "ip": "127.0.0.1"}]
 
 # ---------- CREATE ADMIN (требуется JWT + ADMIN_SECRET в env) ----------

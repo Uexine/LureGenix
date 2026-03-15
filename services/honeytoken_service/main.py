@@ -138,5 +138,11 @@ def list_tokens():
         else:
             token_type = "unknown"
             token_id = basename
-        tokens.append({"id": token_id, "type": token_type, "path": f})
+        tokens.append({
+            "id": token_id,
+            "type": token_type,
+            "path": f,
+            "placement": "-",
+            "created_at": None,
+        })
     return tokens

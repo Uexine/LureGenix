@@ -43,8 +43,25 @@ def send_compromise(token_id: str, file_path: str = ""):
     send_event(token_id, "alert", file_path)
 
 
+def register():
+    """Регистрация ноды при старте (появляется в списке нод в админке)."""
+    try:
+        hostname = os.getenv("NODE_HOSTNAME", f"agent{NODE_ID}")
+        ip = os.getenv("NODE_IP", "127.0.0.1")
+        resp = requests.post(
+            f"{GATEWAY_URL}/register",
+            json={"hostname": hostname, "ip": ip},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            logger.info("Node registered: %s (%s)", hostname, ip)
+    except Exception as e:
+        logger.warning("Register failed: %s", e)
+
+
 if __name__ == "__main__":
     logger.info("Agent started, node_id=%s", NODE_ID)
+    register()
     while True:
         send_heartbeat(f"node_{NODE_ID}")
         time.sleep(HEARTBEAT_INTERVAL)
