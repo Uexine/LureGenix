@@ -118,6 +118,7 @@ async def events(_: dict = Depends(verify_token)):
         return []
 
 
+@app.get("/events/unread_count")
 @app.get("/api/events/unread_count")
 async def events_unread_count(_: dict = Depends(verify_token)):
     try:
@@ -129,6 +130,7 @@ async def events_unread_count(_: dict = Depends(verify_token)):
         return {"count": 0}
 
 
+@app.put("/events/{event_id}/read")
 @app.put("/api/events/{event_id}/read")
 async def event_mark_read(event_id: int, _: dict = Depends(verify_token)):
     result, status = forward_request(EVENT_SERVICE, f"/events/{event_id}/read", "PUT")
@@ -137,6 +139,7 @@ async def event_mark_read(event_id: int, _: dict = Depends(verify_token)):
     return result
 
 
+@app.put("/events/read_all")
 @app.put("/api/events/read_all")
 async def events_mark_all_read(_: dict = Depends(verify_token)):
     result, status = forward_request(EVENT_SERVICE, "/events/read_all", "PUT")

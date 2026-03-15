@@ -15,6 +15,8 @@
     var validSectionIds = ["dashboard", "nodes", "tokens", "events", "map"];
     var supportsUnreadCount = true;
     var supportsMarkAllRead = true;
+    var PATH_UNREAD_COUNT = "events/unread_count";
+    var PATH_READ_ALL = "events/read_all";
 
     function getSectionFromPath() {
         var path = (window.location.pathname || "").replace(/\/$/, "");
@@ -168,7 +170,7 @@
         var unreadCount = data.length;
         if (supportsUnreadCount) {
             try {
-                var unreadRes = await apiGet("events/unread_count");
+                var unreadRes = await apiGet(PATH_UNREAD_COUNT);
                 if (unreadRes.status === 404) supportsUnreadCount = false;
                 else if (unreadRes.ok && unreadRes.data && typeof unreadRes.data.count === "number") unreadCount = unreadRes.data.count;
             } catch (e) {
@@ -211,7 +213,7 @@
             loadEvents();
             return;
         }
-        var res = await (window.apiPut || apiPut || function (path, body) { return api(path, { method: "PUT", body: body || {} }); })("events/read_all", {});
+        var res = await (window.apiPut || apiPut || function (path, body) { return api(path, { method: "PUT", body: body || {} }); })(PATH_READ_ALL, {});
         if (res.status === 401) return;
         if (res.status === 404) {
             supportsMarkAllRead = false;

@@ -33,6 +33,8 @@ async function api(path, opts = {}) {
         window.location.href = "/";
         return { ok: false, status: 401 };
     }
+    if (typeof path !== "string") path = "";
+    path = path.replace(/\s+/g, "_").replace(/\/+/g, "/");
     const url = (path.startsWith("/") ? path : "/api/" + path).replace(/\/+/g, "/");
     const headers = {
         "Content-Type": "application/json",
