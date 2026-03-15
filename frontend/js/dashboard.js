@@ -466,6 +466,7 @@
         document.getElementById("sidebar").classList.toggle("collapsed");
         document.getElementById("mainContent").classList.toggle("expanded");
     };
+    window.showSection = showSection;
     window.loadNodes = loadNodes;
     window.loadTokens = loadTokens;
     window.loadEvents = loadEvents;
