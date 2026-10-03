@@ -6,7 +6,8 @@ async function login() {
 
     // Простая валидация
     if (!username || !password) {
-        errorDiv.innerText = 'Заполните все поля';
+        errorDiv.textContent = 'Заполните все поля';
+        errorDiv.style.display = 'block';
         return;
     }
 
@@ -27,7 +28,7 @@ async function login() {
         const data = await response.json();
 
         if (!response.ok) {
-            throw new Error(data.detail || 'Ошибка входа');
+            throw new Error(response.status === 401 ? 'Неверный логин или пароль' : (data.detail || 'Ошибка входа'));
         }
 
         if (data.token) {
@@ -44,7 +45,8 @@ async function login() {
 
     } catch (error) {
         console.error('Login error:', error);
-        errorDiv.innerText = error.message || 'Ошибка соединения с сервером';
+        errorDiv.textContent = error.message || 'Ошибка соединения с сервером';
+        errorDiv.style.display = 'block';
         
         // Разблокируем кнопку
         loginBtn.disabled = false;
@@ -63,6 +65,7 @@ document.addEventListener('keypress', (e) => {
 // Очистка ошибки при вводе
 document.querySelectorAll('input').forEach(input => {
     input.addEventListener('input', () => {
+        document.getElementById('error').textContent = '';
         document.getElementById('error').style.display = 'none';
     });
 });
