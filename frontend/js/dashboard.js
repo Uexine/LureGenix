@@ -388,13 +388,28 @@
     }
 
     function showNotification(message, type) {
-        type = type || "info";
-        var bg = type === "success" ? "var(--secondary)" : type === "error" ? "var(--danger)" : "var(--primary)";
-        var n = document.createElement("div");
-        n.style.cssText = "position:fixed;top:20px;right:20px;padding:16px 24px;background:" + bg + ";color:white;border-radius:12px;box-shadow:0 10px 15px -3px rgba(0,0,0,0.3);z-index:9999;";
-        n.textContent = message;
-        document.body.appendChild(n);
-        setTimeout(function () { n.remove(); }, 3000);
+    type = type || "info";
+    var colors = {
+        success: "#10b981",   // зелёный
+        error:   "#ef4444",   // красный
+        info:    "#3b82f6"    // синий
+    };
+    var bg = colors[type] || colors.info;
+
+    var n = document.createElement("div");
+    n.style.cssText =
+        "position:fixed;top:20px;right:20px;" +
+        "padding:16px 24px;" +
+        "background:" + bg + ";" +
+        "color:#ffffff;" +
+        "font-weight:500;" +
+        "border-radius:12px;" +
+        "box-shadow:0 10px 15px -3px rgba(0,0,0,0.3);" +
+        "z-index:9999;" +
+        "opacity:1;";   // на случай, если где-то в CSS есть глобальный opacity
+    n.textContent = message;
+    document.body.appendChild(n);
+    setTimeout(function () { n.remove(); }, 3000);
     }
 
     function logout() {
