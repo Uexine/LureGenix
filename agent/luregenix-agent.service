@@ -1,0 +1,21 @@
+[Unit]
+Description=LureGenix honeytoken deployment and monitoring agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/luregenix-agent.env
+ExecStart=/opt/luregenix-agent/venv/bin/python /opt/luregenix-agent/agent.py
+User=root
+Group=root
+UMask=0077
+StateDirectory=luregenix-agent
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=false
+
+[Install]
+WantedBy=multi-user.target

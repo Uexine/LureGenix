@@ -1,10 +1,12 @@
-from fastapi import FastAPI, HTTPException, Depends, Body, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Depends, Body, Header, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from starlette.concurrency import run_in_threadpool
 import requests
 import os
 import jwt
 import asyncio
+import secrets
 
 app = FastAPI()
 
@@ -25,14 +27,14 @@ JWT_SECRET = os.getenv("JWT_SECRET", "temp_secret_key_for_testing")
 security = HTTPBearer(auto_error=False)
 
 
-def forward_request(service_url: str, path: str, method: str, data=None, headers=None):
+def forward_request(service_url: str, path: str, method: str, data=None, headers=None, timeout=5):
     try:
         if method == "GET":
-            resp = requests.get(f"{service_url}{path}", headers=headers, timeout=5)
+            resp = requests.get(f"{service_url}{path}", headers=headers, timeout=timeout)
         elif method == "POST":
-            resp = requests.post(f"{service_url}{path}", json=data, headers=headers, timeout=5)
+            resp = requests.post(f"{service_url}{path}", json=data, headers=headers, timeout=timeout)
         elif method == "PUT":
-            resp = requests.put(f"{service_url}{path}", json=data, headers=headers, timeout=5)
+            resp = requests.put(f"{service_url}{path}", json=data, headers=headers, timeout=timeout)
         else:
             raise HTTPException(status_code=405, detail="Method not allowed")
         if not resp.content:
@@ -58,6 +60,14 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
         return payload
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+def verify_agent(x_agent_secret: str = Header(default="")):
+    expected = os.getenv("AGENT_SECRET", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Set AGENT_SECRET on the application server")
+    if not secrets.compare_digest(x_agent_secret.encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail="Invalid agent secret")
 
 
 # ---------- HEALTH (для проверки готовности) ----------
@@ -88,7 +98,10 @@ async def generate(request: Request, _: dict = Depends(verify_token)):
         data = await request.json()
     except Exception:
         data = {}
-    result, status = forward_request(TOKEN_SERVICE, "/generate", "POST", data=data)
+    result, status = await run_in_threadpool(
+        forward_request, TOKEN_SERVICE, "/generate", "POST", data=data,
+        timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "180")) + 15,
+    )
     if status != 200:
         raise HTTPException(status_code=status, detail=result)
     return result
@@ -219,14 +232,15 @@ async def nodes(_: dict = Depends(verify_token)):
     try:
         result, status = forward_request(DISCOVERY_SERVICE, "/nodes", "GET")
         if status == 200 and isinstance(result, list):
-            return result if result else [{"id": 1, "hostname": "agent1", "ip": "127.0.0.1"}]
+            return result
     except Exception:
         pass
-    return [{"id": 1, "hostname": "agent1", "ip": "127.0.0.1"}]
+    return []
 
 
 @app.post("/api/register")
-async def register_node(request: Request):
+@app.post("/register")
+async def register_node(request: Request, _: None = Depends(verify_agent)):
     """Регистрация ноды агентом (прокси в discovery_service)."""
     try:
         data = await request.json()
@@ -235,6 +249,33 @@ async def register_node(request: Request):
     result, status = forward_request(DISCOVERY_SERVICE, "/register", "POST", data=data)
     if status not in (200, 201):
         raise HTTPException(status_code=status, detail=result)
+    return result
+
+
+@app.get("/api/agent/tasks")
+@app.get("/agent/tasks")
+def agent_tasks(node_id: int, _: None = Depends(verify_agent)):
+    result, status = forward_request(TOKEN_SERVICE, f"/agent/tasks?node_id={node_id}", "GET")
+    if status != 200:
+        raise HTTPException(status_code=status, detail=result)
+    return result
+
+
+@app.put("/api/agent/tasks/{task_id}/result")
+@app.put("/agent/tasks/{task_id}/result")
+def agent_task_result(task_id: int, data: dict, _: None = Depends(verify_agent)):
+    result, status = forward_request(TOKEN_SERVICE, f"/agent/tasks/{task_id}/result", "PUT", data=data)
+    if status != 200:
+        raise HTTPException(status_code=status, detail=result)
+    return result
+
+
+@app.post("/api/agent/event")
+@app.post("/agent/event")
+def agent_event(data: dict, _: None = Depends(verify_agent)):
+    result, status = forward_request(EVENT_SERVICE, "/event", "POST", data=data)
+    if status != 200 or result.get("status") == "error":
+        raise HTTPException(status_code=503, detail="Event could not be saved")
     return result
 
 # ---------- CREATE ADMIN (требуется JWT + ADMIN_SECRET в env) ----------

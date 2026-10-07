@@ -1,12 +1,11 @@
 """
-Сервис обнаружения нод: список из БД (таблица nodes) + опционально контейнеры Docker.
+Сервис обнаружения нод: зарегистрированные Linux-агенты из БД (таблица nodes).
 Агент может регистрироваться через POST /register.
 """
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 import os
-import json
 
 app = FastAPI()
 
@@ -33,7 +32,7 @@ def _list_nodes_from_db():
         conn = get_db()
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, hostname, ip, status, last_heartbeat FROM nodes ORDER BY id"
+            "SELECT id, hostname, ip, CASE WHEN last_heartbeat > now() - interval '150 seconds' THEN 'online' ELSE 'offline' END, last_heartbeat FROM nodes ORDER BY id"
         )
         rows = cur.fetchall()
         cur.close()
@@ -86,13 +85,10 @@ def _list_containers_docker():
 
 @app.get("/nodes")
 def nodes():
-    """Список нод: из БД + при отсутствии записей — из Docker (если доступен)."""
+    """Список зарегистрированных серверов Linux."""
     from_db = _list_nodes_from_db()
     if from_db:
         return from_db
-    from_docker = _list_containers_docker()
-    if from_docker:
-        return [{"id": i + 1, **n} for i, n in enumerate(from_docker)]
     return []
 
 
@@ -114,13 +110,15 @@ def register(data: dict):
                 status = 'online',
                 last_heartbeat = now(),
                 updated_at = now()
+            RETURNING id
             """,
             (hostname, ip),
         )
+        node_id = cur.fetchone()[0]
         conn.commit()
         cur.close()
         conn.close()
-        return {"status": "ok", "hostname": hostname, "ip": ip}
+        return {"status": "ok", "node_id": node_id, "hostname": hostname, "ip": ip}
     except Exception as e:
         print(f"register error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

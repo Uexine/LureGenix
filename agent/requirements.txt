@@ -1,1 +1,2 @@
 requests
+inotify-simple>=2.0; sys_platform == "linux"

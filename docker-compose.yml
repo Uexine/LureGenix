@@ -37,15 +37,27 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    volumes:
-      - ./tokens:/tokens
+      ollama:
+        condition: service_started
     environment:
-      - GROK_API_KEY=${GROK_API_KEY}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b}
+      - LLM_TIMEOUT_SECONDS=${LLM_TIMEOUT_SECONDS:-180}
       - DB_HOST=postgres
       - DB_NAME=${DB_NAME}
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
     command: uvicorn main:app --host 0.0.0.0 --port 8000
+    networks:
+      - luregenix
+
+  ollama:
+    image: ollama/ollama:latest
+    environment:
+      - OLLAMA_NO_CLOUD=1
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
     networks:
       - luregenix
 
@@ -92,6 +104,8 @@ services:
       - "8000:8000"
     environment:
       - JWT_SECRET=${JWT_SECRET}
+      - AGENT_SECRET=${AGENT_SECRET:-}
+      - LLM_TIMEOUT_SECONDS=${LLM_TIMEOUT_SECONDS:-180}
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\" || exit 1"]
@@ -99,13 +113,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
-    networks:
-      - luregenix
-
-  agent:
-    build: ./agent
-    depends_on:
-      - gateway
     networks:
       - luregenix
 
@@ -121,6 +128,9 @@ services:
         condition: service_healthy
     networks:
       - luregenix
+
+volumes:
+  ollama_models:
 
 networks:
   luregenix:

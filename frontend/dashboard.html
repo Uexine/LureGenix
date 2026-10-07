@@ -108,7 +108,7 @@
                 <div class="form-group">
                     <label>Нода</label>
                     <select id="nodeSelect">
-                        <option value="1">agent1 (127.0.0.1)</option>
+                        <option value="">Нет зарегистрированных серверов</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -121,21 +121,25 @@
                     <label>Название (опц.)</label>
                     <input type="text" id="tokenName" placeholder="production-db-key">
                 </div>
+                <div class="form-group form-group-full">
+                    <label for="deploymentMode">Размещение</label>
+                    <select id="deploymentMode">
+                        <option value="manual">Выбранный каталог</option>
+                        <option value="auto">Автоматический выбор агентом</option>
+                    </select>
+                </div>
+                <div class="form-group form-group-full">
+                    <label for="tokenNodePath">Каталог на Linux-сервере</label>
+                    <input type="text" id="tokenNodePath" placeholder="/var/www/html или /home/app">
+                </div>
+                <div class="form-group form-group-full">
+                    <label for="tokenFilename">Имя файла (опц.)</label>
+                    <input type="text" id="tokenFilename" placeholder="database_backup.sql">
+                </div>
                 <div class="form-group form-group-action">
-                    <label class="form-label-invisible">Действие</label>
                     <button class="btn btn-primary btn-generate" id="btnGenerate" onclick="generateToken()">
-                        <i class="fas fa-plus"></i> Сгенерировать
+                        <i class="fas fa-plus"></i> Создать и разместить
                     </button>
-                </div>
-                <div class="form-group form-group-full">
-                    <label>Каталог сохранения</label>
-                    <input type="text" id="tokenSavePath" placeholder="production, keys/eu или /var/app/secrets">
-                    <span class="form-hint">Относительный путь создаёт подкаталог (например <code>production</code> → /tokens/production, <code>keys/eu</code> → /tokens/keys/eu)</span>
-                </div>
-                <div class="form-group form-group-full">
-                    <label>Путь на ноде</label>
-                    <input type="text" id="tokenNodePath" placeholder="/home/app/.ssh или /secrets/.env">
-                    <span class="form-hint">Куда разместить приманку на ноде (Удалённый хост)</span>
                 </div>
             </div>
 
@@ -196,6 +200,7 @@
                             <th class="sortable" data-sort="id" title="Сортировка">ID / тип <i class="sort-icon"></i></th>
                             <th class="sortable" data-sort="placement" title="Сортировка">Размещение <i class="sort-icon"></i></th>
                             <th class="sortable" data-sort="path" title="Сортировка">Путь <i class="sort-icon"></i></th>
+                            <th>Статус</th>
                             <th class="sortable" data-sort="created_at" title="Сортировка">Создан <i class="sort-icon"></i></th>
                         </tr>
                     </thead>
