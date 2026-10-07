@@ -37,8 +37,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      ollama:
-        condition: service_started
     environment:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b}
@@ -52,6 +50,7 @@ services:
       - luregenix
 
   ollama:
+    profiles: ["llm"]
     image: ollama/ollama:latest
     environment:
       - OLLAMA_NO_CLOUD=1
