@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import os
@@ -97,6 +98,8 @@ def llm_content(token_type):
 
 
 def generate_file(token_type):
+    if token_type not in TOKEN_TYPES:
+        raise GenerationError("Unsupported token type")
     if token_type == "ssh_key":
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
@@ -112,7 +115,11 @@ def generate_file(token_type):
     if token_type == "password":
         return ("backup_admin:" + secrets.token_urlsafe(18) + "\n").encode(), "local"
 
-    content = llm_content(token_type)
+    mode = os.getenv("GENERATION_MODE", "llm")
+    if mode not in ("llm", "template"):
+        raise GenerationError("GENERATION_MODE must be llm or template")
+    source = mode
+    content = template_content(token_type) if mode == "template" else llm_content(token_type)
     if token_type == "backup_archive":
         buffer = io.BytesIO()
         payload = content.encode("utf-8")
@@ -121,7 +128,7 @@ def generate_file(token_type):
             entry.size = len(payload)
             entry.mode = 0o600
             archive.addfile(entry, io.BytesIO(payload))
-        return buffer.getvalue(), "llm"
+        return buffer.getvalue(), source
     if token_type == "docx":
         from docx import Document
 
@@ -130,7 +137,7 @@ def generate_file(token_type):
             document.add_paragraph(line)
         buffer = io.BytesIO()
         document.save(buffer)
-        return buffer.getvalue(), "llm"
+        return buffer.getvalue(), source
     if token_type == "pdf":
         from html import escape
         from reportlab.lib.styles import getSampleStyleSheet
@@ -143,5 +150,24 @@ def generate_file(token_type):
             if line.strip():
                 paragraphs.extend([Paragraph(escape(line), styles["BodyText"]), Spacer(1, 8)])
         SimpleDocTemplate(buffer).build(paragraphs)
-        return buffer.getvalue(), "llm"
-    return content.encode("utf-8"), "llm"
+        return buffer.getvalue(), source
+    return content.encode("utf-8"), source
+
+
+def template_content(token_type):
+    password = secrets.token_urlsafe(24)
+    sql = (
+        "-- Application database backup\n"
+        "CREATE TABLE backup_settings (name TEXT PRIMARY KEY, value TEXT);\n"
+        f"INSERT INTO backup_settings VALUES ('backup_password', '{password}');\n"
+        "INSERT INTO backup_settings VALUES ('endpoint', 'https://backup.example.com');\n"
+    )
+    templates = {
+        "env_file": f"APP_ENV=production\nDB_HOST=db.example.com\nDB_USER=backup_admin\nDB_PASSWORD={password}\n",
+        "db_dump": sql,
+        "backup_archive": sql,
+        "bash_history": "cd /var/www\nls -la\npg_dump -h db.example.com -U backup_admin app > /opt/database_backup.sql\n",
+        "log_file": '192.0.2.10 - - [01/Jan/2026:12:00:00 +0000] "GET /admin HTTP/1.1" 200 512\n',
+        "docker_config": json.dumps({"auths": {"registry.example.com": {"auth": base64.b64encode(f"backup_admin:{password}".encode()).decode()}}}) + "\n",
+    }
+    return templates.get(token_type, f"Operations backup notes\n\nBackup endpoint: https://backup.example.com\nAccount: backup_admin\nRecovery password: {password}\n")

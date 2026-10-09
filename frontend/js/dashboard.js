@@ -365,7 +365,8 @@
         var protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         var url = protocol + "//" + window.location.host + "/ws/events";
         try { if (ws && ws.readyState !== WebSocket.CLOSED) ws.close(); } catch (e) {}
-        ws = new WebSocket(url);
+        if (!getToken()) return;
+        ws = new WebSocket(url, ["luregenix", "bearer." + getToken()]);
         ws.onopen = function () {
             wsReconnectCount = 0;
             updateWsStatus(true);

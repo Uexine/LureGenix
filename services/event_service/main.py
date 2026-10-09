@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 import os
@@ -74,6 +74,7 @@ def add_event(data: dict, background_tasks: BackgroundTasks):
                 "read_at": None,
             }
         except psycopg2.Error:
+            conn.rollback()
             cur.execute(
                 f"INSERT INTO {EVENT_LOG_TABLE}(token_id, action, file_path) VALUES(%s,%s,%s) RETURNING id, token_id, action, file_path, created_at",
                 (token_id, action, file_path),
@@ -95,7 +96,7 @@ def add_event(data: dict, background_tasks: BackgroundTasks):
         return {"status": "ok", "event": event_row}
     except Exception as e:
         print(f"event_service add_event error: {e}")
-        return {"status": "error", "detail": str(e)}
+        raise HTTPException(status_code=503, detail="Event storage unavailable") from e
 
 
 async def broadcast_event(event: dict):
@@ -120,6 +121,7 @@ def events():
                 f"SELECT id, token_id, action, file_path, created_at, source_hostname, read_at FROM {EVENT_LOG_TABLE} ORDER BY id DESC LIMIT 200"
             )
         except psycopg2.Error:
+            conn.rollback()
             cur.execute(
                 f"SELECT id, token_id, action, file_path, created_at FROM {EVENT_LOG_TABLE} ORDER BY id DESC LIMIT 200"
             )
@@ -144,6 +146,7 @@ def events_unread_count():
                 f"SELECT COUNT(*) FROM {EVENT_LOG_TABLE} WHERE read_at IS NULL"
             )
         except psycopg2.Error:
+            conn.rollback()
             cur.execute(f"SELECT COUNT(*) FROM {EVENT_LOG_TABLE}")
         n = cur.fetchone()[0]
         cur.close()
@@ -169,7 +172,7 @@ def event_mark_read(event_id: int):
         return {"status": "ok"}
     except Exception as e:
         print(f"event_service mark_read error: {e}")
-        return {"status": "error", "detail": str(e)}
+        raise HTTPException(status_code=503, detail="Event storage unavailable") from e
 
 
 @app.put("/events/read_all")
@@ -180,14 +183,15 @@ def events_mark_all_read():
         try:
             cur.execute(f"UPDATE {EVENT_LOG_TABLE} SET read_at = now() WHERE read_at IS NULL")
         except psycopg2.Error:
-            pass
+            conn.rollback()
+            raise
         conn.commit()
         cur.close()
         conn.close()
         return {"status": "ok"}
     except Exception as e:
         print(f"event_service mark_all_read error: {e}")
-        return {"status": "error", "detail": str(e)}
+        raise HTTPException(status_code=503, detail="Event storage unavailable") from e
 
 
 def cleanup_old_events():

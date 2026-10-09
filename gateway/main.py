@@ -109,7 +109,7 @@ async def generate(request: Request, _: dict = Depends(verify_token)):
 # ---------- EVENTS ----------
 @app.post("/event")
 @app.post("/api/event")
-async def event(data: dict = Body(default=None)):
+async def event(data: dict = Body(default=None), _: None = Depends(verify_agent)):
     if data is None:
         data = {}
     result, status = forward_request(EVENT_SERVICE, "/event", "POST", data=data)
@@ -164,7 +164,14 @@ async def events_mark_all_read(_: dict = Depends(verify_token)):
 # ---------- WebSocket (прокси к event_service, чтобы /ws/events работал и через gateway, и через nginx) ----------
 @app.websocket("/ws/events")
 async def websocket_proxy(websocket: WebSocket):
-    await websocket.accept()
+    protocols = websocket.scope.get("subprotocols", [])
+    try:
+        token_protocol = next(p for p in protocols if p.startswith("bearer."))
+        jwt.decode(token_protocol[7:], JWT_SECRET, algorithms=["HS256"], options={"require": ["exp", "sub"]})
+    except (StopIteration, jwt.PyJWTError):
+        await websocket.close(code=1008)
+        return
+    await websocket.accept(subprotocol="luregenix" if "luregenix" in protocols else token_protocol)
     try:
         import websockets
         async with websockets.connect(EVENT_WS_URL) as backend:

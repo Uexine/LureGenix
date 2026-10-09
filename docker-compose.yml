@@ -39,6 +39,7 @@ services:
         condition: service_healthy
     environment:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - GENERATION_MODE=${GENERATION_MODE:-template}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:3b}
       - LLM_TIMEOUT_SECONDS=${LLM_TIMEOUT_SECONDS:-180}
       - DB_HOST=postgres
@@ -103,7 +104,11 @@ services:
       - "8000:8000"
     environment:
       - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_SECRET=${ADMIN_SECRET:-}
+      - BOOTSTRAP_ADMIN_USERNAME=${BOOTSTRAP_ADMIN_USERNAME:-admin}
+      - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-}
       - AGENT_SECRET=${AGENT_SECRET:-}
+      - ADMIN_SECRET=${ADMIN_SECRET:-}
       - LLM_TIMEOUT_SECONDS=${LLM_TIMEOUT_SECONDS:-180}
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     healthcheck:
