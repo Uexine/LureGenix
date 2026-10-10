@@ -23,8 +23,9 @@
         return validSectionIds.indexOf(id) >= 0 ? id : "dashboard";
     }
 
-    function updateUrlForSection(id, replace) {
+    function updateUrlForSection(id, replace, tokenId) {
         var path = "/dashboard" + (id === "dashboard" ? "" : "/" + id);
+        if (id === "tokens" && tokenId) path += "?token=" + encodeURIComponent(tokenId);
         if (replace) {
             history.replaceState({ section: id }, "", path);
         } else {
@@ -38,16 +39,32 @@
             loadEvents: loadEvents, loadNetworkMap: loadNetworkMap, markAllEventsRead: markAllEventsRead,
             scanNetwork: scanNetwork, showMap: function () { showSection("map"); }, retryToken: retryToken,
             markEventRead: markEventRead,
+            focusToken: openToken,
+            deleteSelectedEvents: function () { deleteEvents(false); },
+            deleteAllEvents: function () { deleteEvents(true); },
             passwordDialog: function () { document.getElementById("passwordDialog").showModal(); },
             closePasswordDialog: function () { document.getElementById("passwordDialog").close(); }};
         document.addEventListener("click", function (event) {
             var control = event.target.closest("[data-action]");
             if (control && !control.disabled && actions[control.dataset.action]) {
+                event.preventDefault();
                 actions[control.dataset.action](control.dataset.tokenId || control.dataset.eventId);
             }
         });
         document.getElementById("tokensFilterSearch").addEventListener("input", applyTokensFilter);
         document.getElementById("tokensFilterType").addEventListener("change", applyTokensFilter);
+        document.getElementById("generationMode").addEventListener("change", loadGenerationStatus);
+        document.getElementById("typeSelect").addEventListener("change", updateGenerationControls);
+        document.getElementById("selectAllEvents").addEventListener("change", function () {
+            visibleEventIds.forEach(id => this.checked ? selectedEventIds.add(id) : selectedEventIds.delete(id));
+            updateEventSelection();
+        });
+        document.getElementById("eventsListFull").addEventListener("change", function (event) {
+            if (!event.target.matches(".event-select")) return;
+            const id = Number(event.target.dataset.eventId);
+            if (event.target.checked) selectedEventIds.add(id); else selectedEventIds.delete(id);
+            updateEventSelection();
+        });
         document.getElementById("passwordForm").addEventListener("submit", async function (event) {
             event.preventDefault();
             var form = event.target;
@@ -93,14 +110,18 @@
         window.addEventListener("popstate", function (e) {
             var id = (e.state && e.state.section) ? e.state.section : getSectionFromPath();
             showSection(id);
+            const tokenId = new URLSearchParams(window.location.search).get("token");
+            if (id === "tokens" && tokenId) focusToken(tokenId);
         });
 
         if (window.location.pathname === "/dashboard.html" || window.location.pathname === "/dashboard.html/") {
             history.replaceState({ section: "dashboard" }, "", "/dashboard");
         }
         var initialSection = getSectionFromPath();
-        updateUrlForSection(initialSection, true);
+        const initialToken = new URLSearchParams(window.location.search).get("token");
+        updateUrlForSection(initialSection, true, initialToken);
         showSection(initialSection);
+        if (initialSection === "tokens" && initialToken) focusToken(initialToken);
 
         loadNodes();
         loadTokenTypes();
@@ -114,11 +135,27 @@
         });
     });
 
-    async function loadGenerationStatus() {
-        var result = await apiGet("generation-status");
+    function updateGenerationControls() {
+        const local = ["ssh_key", "api_key", "password"].includes(document.getElementById("typeSelect").value);
+        document.getElementById("generationMode").disabled = local;
+        if (local) document.getElementById("generatorStatus").textContent = "Генератор: локальный";
+        else renderGenerationStatus();
+    }
+
+    var generationStatus = null;
+    function renderGenerationStatus() {
+        if (document.getElementById("generationMode").disabled) return;
         var label = document.getElementById("generatorStatus");
-        label.textContent = !result.ok ? "Генератор недоступен" : result.data.mode === "template" ? "Генератор: шаблоны" :
-            "LLM: " + result.data.model + (result.data.ready ? " · готова" : " · недоступна");
+        const llm = document.getElementById("generationMode").value === "llm";
+        label.textContent = !llm ? "Генератор: шаблоны" : !generationStatus ? "LLM: проверка" :
+            "LLM: " + generationStatus.model + (generationStatus.llm_ready ? " · готова" : " · недоступна");
+    }
+
+    async function loadGenerationStatus() {
+        renderGenerationStatus();
+        var result = await apiGet("generation-status");
+        generationStatus = result.ok ? result.data : {model: "сервис недоступен", llm_ready: false};
+        renderGenerationStatus();
     }
 
     async function scanNetwork() {
@@ -159,6 +196,7 @@
         select.innerHTML = res.data.map(function (t) {
             return "<option value=\"" + escapeHtml(t.name) + "\">" + escapeHtml(t.description || t.name) + "</option>";
         }).join("");
+        updateGenerationControls();
     }
 
     function showSection(id) {
@@ -209,6 +247,33 @@
     var tokensData = [];
     var tokensSort = { field: "created_at", dir: -1 };
     var tokensFilter = { type: "", search: "" };
+    var highlightedToken = "";
+    var highlightUntil = 0;
+    var highlightTimer = null;
+    var scrollToToken = false;
+
+    async function openToken(tokenId) {
+        updateUrlForSection("tokens", false, tokenId);
+        showSection("tokens");
+        await focusToken(tokenId);
+    }
+
+    async function focusToken(tokenId) {
+        highlightedToken = tokenId;
+        highlightUntil = Date.now() + 5000;
+        scrollToToken = true;
+        tokensFilter = {type: "", search: ""};
+        document.getElementById("tokensFilterSearch").value = "";
+        document.getElementById("tokensFilterType").value = "";
+        clearTimeout(highlightTimer);
+        renderTokensTable();
+        await loadTokens();
+        if (!tokensData.some(token => String(token.id) === String(tokenId))) showNotification("Приманка не найдена в списке", "error");
+        highlightTimer = setTimeout(function () {
+            highlightedToken = "";
+            document.querySelectorAll(".token-highlight").forEach(row => row.classList.remove("token-highlight"));
+        }, 5000);
+    }
 
     function sortTokensBy(field) {
         if (tokensSort.field === field) tokensSort.dir = -tokensSort.dir;
@@ -267,13 +332,21 @@
             var created = t.created_at ? new Date(t.created_at).toLocaleString() : "-";
             var statuses = { pending: "Ожидает агента", deployed: "Размещён", failed: "Ошибка размещения", legacy: "Старая запись" };
             var status = statuses[t.deployment_status] || "Старая запись";
-            var error = t.deployment_error ? "<div>" + escapeHtml(t.deployment_error) + "</div>" : "";
+            var error = t.deployment_error ? "<div class=\"deployment-error\">" + escapeHtml(userError(t.deployment_error, "Не удалось разместить файл. Проверьте журнал Linux-агента.")) + "</div>" : "";
             var integrity = {modified: "Файл изменён", missing: "Файл удалён", error: "Ошибка мониторинга"}[t.integrity_status];
             if (integrity && t.deployment_status === "deployed") error += "<div>" + integrity + "</div>";
             var retry = t.deployment_status === "failed" ? "<button class=\"btn btn-outline\" data-action=\"retryToken\" data-token-id=\"" + escapeHtml(id) + "\" title=\"Повторить размещение\"><i class=\"fas fa-redo\"></i></button>" : "";
-            return "<tr><td><code>" + escapeHtml(id) + "</code> / " + escapeHtml(type) + "<div>" + escapeHtml(t.generation_source || "-") + "</div></td><td>" + escapeHtml(placement) + "</td><td><code style=\"font-size:0.85em;\">" + escapeHtml(path) + "</code></td><td>" + escapeHtml(status) + error + retry + "</td><td>" + created + "</td></tr>";
+            const source = {template: "Шаблон", llm: "Локальная LLM", local: "Локальный генератор"}[t.generation_source] || "-";
+            const highlight = String(id) === String(highlightedToken) && Date.now() < highlightUntil;
+            return "<tr tabindex=\"-1\" data-token-id=\"" + escapeHtml(id) + "\" class=\"" + (highlight ? "token-highlight" : "") + "\"><td><code>" + escapeHtml(id) + "</code> / " + escapeHtml(type) + "<div>" + source + "</div></td><td>" + escapeHtml(placement) + "</td><td><code>" + escapeHtml(path) + "</code></td><td>" + escapeHtml(status) + error + retry + "</td><td>" + created + "</td></tr>";
         }).join("");
         updateTokensSortIcons();
+        const selectedRow = Array.from(tbody.querySelectorAll("tr[data-token-id]")).find(row => row.dataset.tokenId === String(highlightedToken));
+        if (selectedRow && scrollToToken && getSectionFromPath() === "tokens") {
+            selectedRow.scrollIntoView({block: "center", behavior: "auto"});
+            selectedRow.focus({preventScroll: true});
+            scrollToToken = false;
+        }
     }
 
     function updateTokensSortIcons() {
@@ -311,45 +384,51 @@
     var eventsLoading = false;
     var eventsInitialized = false;
     var latestEventId = 0;
+    var selectedEventIds = new Set();
+    var visibleEventIds = [];
+    var eventsDeleting = false;
     async function loadEvents() {
         if (eventsLoading || !getToken()) return;
         eventsLoading = true;
         try {
-        const res = await apiGet("events");
-        if (res.status === 401) return;
-        if (!res.ok) { showNotification("Журнал событий недоступен", "error"); return; }
-        const data = Array.isArray(res.data) ? res.data : [];
-        // Use the same cursor for socket refreshes and polling to avoid duplicate alerts.
-        const newAlerts = data.filter(function (event) {
-            return Number(event.id) > latestEventId && alertActions.indexOf(event.action) >= 0;
-        });
-        const notify = eventsInitialized && newAlerts.length > 0;
-        data.forEach(function (event) { latestEventId = Math.max(latestEventId, Number(event.id) || 0); });
-        eventsInitialized = true;
-        if (notify) showNotification("Новых тревог: " + newAlerts.length + ". " + (newAlerts[0].file_path || newAlerts[0].token_id || ""), "error");
-        document.getElementById("eventCount").textContent = data.length;
+            const res = await apiGet("events");
+            if (res.status === 401) return;
+            if (!res.ok) { showNotification("Журнал событий недоступен", "error"); return; }
+            const data = Array.isArray(res.data) ? res.data : [];
+            // Use the same cursor for socket refreshes and polling to avoid duplicate alerts.
+            const newAlerts = data.filter(function (event) {
+                return Number(event.id) > latestEventId && alertActions.indexOf(event.action) >= 0;
+            });
+            const notify = eventsInitialized && newAlerts.length > 0;
+            data.forEach(function (event) { latestEventId = Math.max(latestEventId, Number(event.id) || 0); });
+            eventsInitialized = true;
+            if (notify) showNotification("Новых тревог: " + newAlerts.length + ". " + (newAlerts[0].file_path || newAlerts[0].token_id || ""), "error");
+            document.getElementById("eventCount").textContent = data.length;
 
-        const alertCount = data.filter(function (e) { return alertActions.indexOf(e.action) >= 0; }).length;
-        document.getElementById("alertCount").textContent = alertCount;
+            const alertCount = data.filter(function (e) { return alertActions.indexOf(e.action) >= 0; }).length;
+            document.getElementById("alertCount").textContent = alertCount;
 
-        const unreadRes = await apiGet("events/unread_count");
-        const unreadCount = unreadRes.ok ? unreadRes.data.count : null;
-        var badge = document.getElementById("sidebarEventBadge");
-        if (badge) {
-            badge.textContent = unreadCount === null ? "?" : unreadCount;
-            badge.style.display = unreadCount === null || unreadCount > 0 ? "" : "none";
-        }
+            const unreadRes = await apiGet("events/unread_count");
+            const unreadCount = unreadRes.ok ? unreadRes.data.count : null;
+            var badge = document.getElementById("sidebarEventBadge");
+            if (badge) {
+                badge.textContent = unreadCount === null ? "?" : unreadCount;
+                badge.style.display = unreadCount === null || unreadCount > 0 ? "" : "none";
+            }
 
-        const html = data.length === 0
-            ? "<div style=\"text-align:center;padding:40px;color:var(--text-secondary);\">Нет событий</div>"
-            : data.map(eventRow).join("");
+            const html = data.length === 0
+                ? "<div style=\"text-align:center;padding:40px;color:var(--text-secondary);\">Нет событий</div>"
+                : data.map(event => eventRow(event, false)).join("");
 
-        document.getElementById("eventsList").innerHTML = html;
-        document.getElementById("eventsListFull").innerHTML = html;
+            document.getElementById("eventsList").innerHTML = html;
+            visibleEventIds = data.map(event => Number(event.id));
+            selectedEventIds.forEach(id => { if (!visibleEventIds.includes(id)) selectedEventIds.delete(id); });
+            document.getElementById("eventsListFull").innerHTML = data.length ? data.map(event => eventRow(event, true)).join("") : html;
+            updateEventSelection();
         } finally { eventsLoading = false; }
     }
 
-    function eventRow(event) {
+    function eventRow(event, selectable) {
         const rawDate = event.observed_at || event.created_at || event.time;
         const date = rawDate ? new Date(rawDate) : new Date();
         const action = event.action || event.type || "event";
@@ -358,10 +437,13 @@
         if (action === "heartbeat") { icon = "fa-heartbeat"; color = "var(--secondary)"; }
         else if (alertActions.indexOf(action) >= 0) { icon = "fa-exclamation-triangle"; color = "var(--danger)"; }
         var readClass = (event.read_at) ? " event-item-read" : "";
-        return "<div class=\"event-item" + readClass + "\" data-event-id=\"" + escapeHtml(event.id || "") + "\"><div class=\"event-icon\" style=\"color:" + color + ";\"><i class=\"fas " + icon + "\"></i></div>" +
-            "<div class=\"event-content\"><div class=\"event-title\"><strong>" + escapeHtml(action) + "</strong> для " + escapeHtml(displayName) + "</div>" +
+        const actionName = {open: "Открытие", access: "Чтение", modify: "Изменение", delete: "Удаление", deployed: "Размещение", deployment_failed: "Ошибка размещения", monitor_error: "Ошибка мониторинга", heartbeat: "Связь с агентом", alert: "Тревога", compromise: "Компрометация"}[action] || "Событие";
+        return "<div class=\"event-item" + readClass + "\" data-event-id=\"" + escapeHtml(event.id || "") + "\">" +
+            (selectable ? "<input type=\"checkbox\" class=\"event-select\" data-event-id=\"" + escapeHtml(event.id) + "\" aria-label=\"Выбрать событие " + escapeHtml(event.id) + "\">" : "") +
+            "<div class=\"event-icon\" style=\"color:" + color + ";\"><i class=\"fas " + icon + "\"></i></div>" +
+            "<div class=\"event-content\"><div class=\"event-title\"><strong>" + actionName + "</strong> для " + escapeHtml(displayName) + "</div>" +
             "<div class=\"event-time\"><i class=\"far fa-clock\" style=\"margin-right:4px;\"></i>" + date.toLocaleString() + "</div></div>" +
-            "<div class=\"event-type\">" + escapeHtml(event.file_path || "N/A") + "</div>" +
+            "<div class=\"event-type\">" + escapeHtml(event.file_path || "Нет пути") + "</div>" +
             (!event.read_at && event.id ? "<button type=\"button\" class=\"btn btn-outline\" data-action=\"markEventRead\" data-event-id=\"" + escapeHtml(event.id) + "\" title=\"Подтвердить событие\"><i class=\"fas fa-check\"></i></button>" : "") + "</div>";
     }
 
@@ -369,6 +451,36 @@
         const result = await apiPut("events/" + encodeURIComponent(eventId) + "/read");
         if (!result.ok) showNotification(apiError(result, "Не удалось подтвердить событие"), "error");
         loadEvents();
+    }
+
+    function updateEventSelection() {
+        document.querySelectorAll("#eventsListFull .event-select").forEach(input => { input.checked = selectedEventIds.has(Number(input.dataset.eventId)); });
+        const all = document.getElementById("selectAllEvents");
+        all.checked = visibleEventIds.length > 0 && selectedEventIds.size === visibleEventIds.length;
+        all.indeterminate = selectedEventIds.size > 0 && !all.checked;
+        all.disabled = !visibleEventIds.length || eventsDeleting;
+        document.getElementById("deleteSelectedEvents").disabled = !selectedEventIds.size || eventsDeleting;
+        document.querySelector("[data-action='deleteAllEvents']").disabled = eventsDeleting;
+        document.getElementById("deleteSelectedLabel").textContent = "Удалить выбранные" + (selectedEventIds.size ? " (" + selectedEventIds.size + ")" : "");
+    }
+
+    async function deleteEvents(clearAll) {
+        if (eventsDeleting || (!clearAll && !selectedEventIds.size)) return;
+        const message = clearAll ? "Удалить весь журнал событий без возможности восстановления?" : "Удалить выбранные события (" + selectedEventIds.size + ") без возможности восстановления?";
+        if (!window.confirm(message)) return;
+        eventsDeleting = true;
+        updateEventSelection();
+        try {
+            const result = await api("events", {method: "DELETE", body: clearAll ? {clear_all: true} : {ids: Array.from(selectedEventIds)}});
+            if (result.ok) {
+                selectedEventIds.clear();
+                showNotification("Удалено событий: " + result.data.deleted, "success");
+                await loadEvents();
+            } else showNotification(apiError(result, "Не удалось удалить события"), "error");
+        } finally {
+            eventsDeleting = false;
+            updateEventSelection();
+        }
     }
 
     async function markAllEventsRead() {
@@ -413,7 +525,7 @@
         }
         btn.disabled = true;
         btn.innerHTML = "<i class=\"fas fa-spinner fa-spin\"></i> Генерация...";
-        var payload = { node_id: nodeId, type: type, name: name, filename: filename, target_kind: "directory" };
+        var payload = { node_id: nodeId, type: type, name: name, filename: filename, target_kind: "directory", generation_mode: document.getElementById("generationMode").value };
         if (!auto) payload.node_path = nodePath;
         var res = await apiPost("generate", payload);
         btn.disabled = false;
@@ -448,7 +560,7 @@
         ws.onmessage = function (ev) {
             var payload = {};
             try { payload = JSON.parse(ev.data); } catch { return; }
-            if (!payload || !payload.action) return;
+            if (!payload || (!payload.action && payload.type !== "events_deleted")) return;
             loadEvents();
             loadTokens();
             loadNetworkMap();
@@ -542,7 +654,7 @@
                 : list.map(function (x) {
                     var path = escapeHtml(x.path || "-");
                     var name = escapeHtml(x.name || x.token.type || "-");
-                    return "<div class=\"map-token-item\"><i class=\"fas fa-file\"></i> " + name + (path ? " <code>" + path + "</code>" : "") + "</div>";
+                    return "<a class=\"map-token-item\" href=\"/dashboard/tokens?token=" + encodeURIComponent(x.token.id) + "\" data-action=\"focusToken\" data-token-id=\"" + escapeHtml(x.token.id) + "\"><i class=\"fas fa-file\"></i> " + name + (path ? " <code>" + path + "</code>" : "") + "</a>";
                 }).join("");
             return "<div class=\"map-node-card\"><div class=\"map-node-header\"><span class=\"map-node-title\"><i class=\"fas fa-server\"></i> " + hostname + "</span><span class=\"status-badge " + statusClass + "\">" + statusText + "</span></div><div class=\"map-node-meta\">" + ip + "</div><div class=\"map-node-tokens\">" + tokensHtml + "</div></div>";
         }).join("");

@@ -37,3 +37,22 @@ class TemplateGenerationTests(unittest.TestCase):
         with patch.dict(os.environ, {"GENERATION_MODE": "invalid"}):
             with self.assertRaises(generator.GenerationError):
                 generator.generate_file("txt")
+
+    def test_request_mode_overrides_default_without_changing_environment(self):
+        with (
+            patch.dict(os.environ, {"GENERATION_MODE": "llm"}),
+            patch.object(generator, "llm_content") as llm,
+        ):
+            payload, source = generator.generate_file("db_dump", mode="template")
+            self.assertEqual(source, "template")
+            self.assertIn(b"CREATE TABLE", payload)
+            self.assertEqual(os.environ["GENERATION_MODE"], "llm")
+            llm.assert_not_called()
+        with (
+            patch.dict(os.environ, {"GENERATION_MODE": "template"}),
+            patch.object(generator, "llm_content", return_value="LLM document") as llm,
+        ):
+            payload, source = generator.generate_file("txt", mode="llm")
+            self.assertEqual(source, "llm")
+            self.assertEqual(payload, b"LLM document")
+            llm.assert_called_once_with("txt")

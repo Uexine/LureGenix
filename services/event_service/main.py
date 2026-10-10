@@ -17,7 +17,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from common.database import connect as get_db
@@ -197,6 +197,38 @@ def events_mark_all_read():
     with closing(get_db()) as conn, conn, conn.cursor() as cur:
         cur.execute("UPDATE event_log SET read_at=now() WHERE read_at IS NULL")
     return {"status": "ok"}
+
+
+class DeleteEvents(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ids: list[PositiveInt] = Field(default_factory=list, max_length=500)
+    clear_all: bool = False
+
+    @model_validator(mode="after")
+    def explicit_selection(self):
+        if self.clear_all == bool(self.ids):
+            raise ValueError("Выберите события или явно укажите очистку всего журнала.")
+        return self
+
+
+@app.delete("/events")
+def delete_events(data: DeleteEvents, background_tasks: BackgroundTasks):
+    try:
+        with closing(get_db()) as conn, conn, conn.cursor() as cur:
+            # Preserve the ID sequence and token integrity; clear only the journal.
+            if data.clear_all:
+                cur.execute("DELETE FROM event_log")
+            else:
+                cur.execute("DELETE FROM event_log WHERE id = ANY(%s)", (data.ids,))
+            deleted = cur.rowcount
+        if deleted:
+            background_tasks.add_task(broadcast_event, {"type": "events_deleted"})
+        return {"status": "ok", "deleted": deleted}
+    except psycopg2.Error as exc:
+        logger.error("Event deletion failed (%s)", type(exc).__name__)
+        raise HTTPException(
+            503, "Не удалось очистить журнал. Повторите попытку."
+        ) from exc
 
 
 def cleanup_old_events():

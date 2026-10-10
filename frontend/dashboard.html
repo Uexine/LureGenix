@@ -29,10 +29,10 @@
                 <i class="fas fa-shield-alt"></i>
                 <span>Honeytokens</span>
             </a>
-            <a href="/dashboard/events" data-section="events" title="Журнал событий (число — количество записей)">
+            <a href="/dashboard/events" data-section="events" title="Журнал событий">
                 <i class="fas fa-bell"></i>
                 <span>События</span>
-                <span class="sidebar-event-badge" id="sidebarEventBadge" title="Количество записей в журнале событий" style="display: none;">0</span>
+                <span class="sidebar-event-badge" id="sidebarEventBadge" title="Неподтверждённые тревоги" style="display: none;">0</span>
             </a>
             <a href="/dashboard/map" data-section="map" title="Карта сети">
                 <i class="fas fa-project-diagram"></i>
@@ -54,7 +54,7 @@
                     <div class="avatar" id="userAvatar">A</div>
                     <div class="user-info">
                         <div class="name" id="userName">Admin</div>
-                        <div class="role">SOC Analyst</div>
+                        <div class="role">Администратор</div>
                     </div>
                     <span class="logout-label" style="color: var(--text-secondary); margin-left: 8px; font-size: 0.85rem;">Выйти</span>
                     <i class="fas fa-sign-out-alt" style="color: var(--text-secondary); margin-left: 4px;"></i>
@@ -123,6 +123,13 @@
                 <div class="form-group">
                     <label>Название (опц.)</label>
                     <input type="text" id="tokenName" placeholder="production-db-key">
+                </div>
+                <div class="form-group form-group-full">
+                    <label for="generationMode">Генерация содержимого</label>
+                    <select id="generationMode">
+                        <option value="template">Шаблоны</option>
+                        <option value="llm">Локальная LLM</option>
+                    </select>
                 </div>
                 <div class="form-group form-group-full">
                     <label for="deploymentMode">Размещение</label>
@@ -223,15 +230,22 @@
         <div class="section-content hidden" id="section-events">
             <div class="section-header">
                 <h2>Все события</h2>
-                <div style="display:flex;gap:8px;align-items:center;">
+                <div class="event-actions">
                     <button class="btn btn-outline" data-action="markAllEventsRead" title="Отметить все прочитанными">
                         <i class="fas fa-check-double"></i> Прочитано
                     </button>
                     <button class="btn btn-outline" data-action="loadEvents">
                         <i class="fas fa-sync-alt"></i> Обновить
                     </button>
+                    <button class="btn btn-outline btn-danger" data-action="deleteSelectedEvents" id="deleteSelectedEvents" disabled title="Удалить выбранные события">
+                        <i class="fas fa-trash-alt"></i> <span id="deleteSelectedLabel">Удалить выбранные</span>
+                    </button>
+                    <button class="btn btn-outline btn-danger" data-action="deleteAllEvents" title="Очистить весь журнал">
+                        <i class="fas fa-trash-alt"></i> Очистить журнал
+                    </button>
                 </div>
             </div>
+            <label class="event-select-all"><input type="checkbox" id="selectAllEvents"> Выбрать все показанные события</label>
             <div class="events-list" id="eventsListFull"></div>
         </div>
 

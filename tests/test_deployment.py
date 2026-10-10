@@ -53,7 +53,7 @@ class GenerationTests(unittest.TestCase):
         ):
             with self.assertRaises(generator.GenerationError) as error:
                 generator.generate_file("db_dump")
-        self.assertIn("Cannot connect to local Ollama", str(error.exception))
+        self.assertIn("Нет соединения с локальной Ollama", str(error.exception))
 
     def test_provider_response_used_for_sql(self):
         response = MagicMock(status_code=200)
@@ -98,7 +98,7 @@ class GenerationTests(unittest.TestCase):
         ):
             with self.assertRaises(generator.GenerationError) as error:
                 generator.generate_file("db_dump")
-        self.assertIn("model not found", str(error.exception))
+        self.assertIn("не найдена", str(error.exception))
 
     def test_local_model_timeout_is_reported(self):
         with patch.object(
@@ -108,7 +108,7 @@ class GenerationTests(unittest.TestCase):
         ):
             with self.assertRaises(generator.GenerationError) as error:
                 generator.generate_file("db_dump")
-        self.assertIn("timed out", str(error.exception))
+        self.assertIn("не ответила вовремя", str(error.exception))
 
     def test_truncated_local_response_is_rejected(self):
         response = MagicMock(status_code=200)
@@ -116,7 +116,7 @@ class GenerationTests(unittest.TestCase):
         with patch.object(generator.requests, "post", return_value=response):
             with self.assertRaises(generator.GenerationError) as error:
                 generator.generate_file("db_dump")
-        self.assertIn("truncated", str(error.exception))
+        self.assertIn("обрезан", str(error.exception))
 
     def test_real_binary_file_formats(self):
         with patch.object(
@@ -148,6 +148,59 @@ class GenerationTests(unittest.TestCase):
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(service.app)
+
+    def test_generation_mode_is_forwarded_for_each_request(self):
+        for mode in ("template", "llm"):
+            with self.subTest(mode=mode):
+                connection, _ = database([(7, "credential-hash"), (11,), (31,)])
+                with (
+                    patch.object(service, "get_db", return_value=connection),
+                    patch.object(
+                        service, "generate_file", return_value=(b"content", mode)
+                    ) as generate,
+                ):
+                    response = self.client.post(
+                        "/generate",
+                        json={"node_id": 7, "type": "txt", "generation_mode": mode},
+                    )
+                self.assertEqual(response.status_code, 200)
+                generate.assert_called_once_with("txt", mode=mode)
+                self.assertEqual(response.json()["generation_source"], mode)
+
+    def test_unknown_generation_mode_is_rejected_before_database(self):
+        with patch.object(service, "get_db") as connect:
+            response = self.client.post(
+                "/generate", json={"node_id": 7, "generation_mode": "cloud"}
+            )
+        self.assertEqual(response.status_code, 422)
+        connect.assert_not_called()
+
+    def test_model_readiness_is_checked_in_template_mode(self):
+        response = MagicMock()
+        response.json.return_value = {"models": [{"name": "qwen2.5:3b"}]}
+        with (
+            patch.dict(
+                os.environ,
+                {"GENERATION_MODE": "template", "OLLAMA_MODEL": "qwen2.5:3b"},
+            ),
+            patch.object(service.requests, "get", return_value=response),
+        ):
+            result = service.generation_status()
+        self.assertTrue(result["llm_ready"])
+        self.assertTrue(result["ready"])
+
+    def test_templates_remain_ready_without_ollama(self):
+        with (
+            patch.dict(os.environ, {"GENERATION_MODE": "template"}),
+            patch.object(
+                service.requests,
+                "get",
+                side_effect=service.requests.exceptions.ConnectionError,
+            ),
+        ):
+            result = service.generation_status()
+        self.assertFalse(result["llm_ready"])
+        self.assertTrue(result["ready"])
 
     def test_generation_enqueues_selected_host_path(self):
         connection, cursor = database([(7, "credential-hash"), (11,), (31,)])

@@ -48,7 +48,7 @@ app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
 
 
 def forward_request(service_url, path, method, data=None, headers=None, timeout=5):
-    if method not in ("GET", "POST", "PUT"):
+    if method not in ("GET", "POST", "PUT", "DELETE"):
         raise HTTPException(405, "Method not allowed")
     try:
         response = requests.request(
@@ -187,6 +187,12 @@ async def generate(request: Request, _: dict = Depends(verify_token)):
 @app.get("/api/events")
 def events(_: dict = Depends(verify_token)):
     return proxy_request(EVENT_SERVICE, "/events")
+
+
+@app.delete("/events")
+@app.delete("/api/events")
+def delete_events(data: dict, _: dict = Depends(verify_token)):
+    return proxy_request(EVENT_SERVICE, "/events", "DELETE", data=data)
 
 
 @app.get("/events/unread_count")

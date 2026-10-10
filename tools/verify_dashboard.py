@@ -54,9 +54,19 @@ def main():
             "deployment_status": "deployed",
             "deployed_path": "/var/www/html/database_backup.sql",
             "created_at": "2026-10-07T10:00:00",
-        }
+        },
+        {
+            "id": "failed-token",
+            "type": "db_dump",
+            "node_id": 7,
+            "deployment_status": "failed",
+            "deployment_error": "File already exists; choose a different filename",
+            "generation_source": "template",
+            "created_at": "2026-10-07T10:00:00Z",
+        },
     ]
     requests = []
+    deletions = []
     event = {
         "id": 1,
         "token_id": "example-token",
@@ -66,6 +76,8 @@ def main():
         "created_at": "2026-10-07T10:01:00Z",
         "read_at": None,
     }
+    fixture_events = [event]
+    fixture_options = {"delete_failed": False}
 
     def api(route):
         path = route.request.url.split("/api/")[-1]
@@ -78,16 +90,44 @@ def main():
         elif path == "tokens":
             data = tokens
         elif path == "token-types":
-            data = [{"name": "db_dump", "description": "SQL database backup"}]
+            data = [
+                {"name": "db_dump", "description": "Резервная копия БД (SQL)"},
+                {"name": "ssh_key", "description": "Закрытый SSH-ключ"},
+            ]
         elif path == "events/unread_count":
-            data = {"count": int(event["read_at"] is None)}
+            data = {"count": sum(item["read_at"] is None for item in fixture_events)}
         elif path == "events":
-            data = [event]
+            if route.request.method == "DELETE":
+                if fixture_options["delete_failed"]:
+                    route.fulfill(
+                        status=503, json={"detail": "Event storage unavailable"}
+                    )
+                    return
+                payload = route.request.post_data_json
+                deletions.append(payload)
+                before = len(fixture_events)
+                fixture_events[:] = (
+                    []
+                    if payload.get("clear_all")
+                    else [
+                        item
+                        for item in fixture_events
+                        if item["id"] not in payload["ids"]
+                    ]
+                )
+                data = {"deleted": before - len(fixture_events)}
+            else:
+                data = fixture_events
         elif path in ("events/1/read", "events/read_all"):
             event["read_at"] = "2026-10-07T10:02:00Z"
             data = {"status": "ok"}
         elif path == "generation-status":
-            data = {"mode": "template", "ready": True, "model": "qwen2.5:3b"}
+            data = {
+                "mode": "template",
+                "ready": True,
+                "llm_ready": True,
+                "model": "qwen2.5:3b",
+            }
         elif path == "scan":
             data = {
                 "subnet": "10.124.21.0/24",
@@ -106,6 +146,8 @@ def main():
             for width, height in [(1440, 1000), (390, 844)]:
                 event["id"] = 1
                 event["read_at"] = None
+                fixture_events[:] = [event]
+                fixture_options["delete_failed"] = False
                 context = browser.new_context(
                     viewport={"width": width, "height": height}
                 )
@@ -148,7 +190,9 @@ def main():
                     "() => document.querySelector('#notification')?.textContent.includes('/var/www/html/database_backup.sql')",
                     timeout=10000,
                 )
-                page.evaluate("document.querySelector('#notification').remove(); loadEvents()")
+                page.evaluate(
+                    "document.querySelector('#notification').remove(); loadEvents()"
+                )
                 page.wait_for_timeout(300)
                 assert page.locator("#notification").count() == 0
                 event["id"] = 1
@@ -162,6 +206,8 @@ def main():
                 assert requests[-1]["node_id"] == "9"
                 assert requests[-1]["node_path"] == "/home/app"
                 assert requests[-1]["filename"] == "backup.sql"
+                assert requests[-1]["generation_mode"] == "template"
+                page.select_option("#generationMode", "llm")
                 page.select_option("#deploymentMode", "auto")
                 assert page.locator("#tokenNodePath").is_disabled()
                 page.click("#btnGenerate")
@@ -169,6 +215,15 @@ def main():
                     "() => !document.querySelector('#btnGenerate').disabled"
                 )
                 assert "node_path" not in requests[-1]
+                assert requests[-1]["generation_mode"] == "llm"
+                page.select_option("#typeSelect", "ssh_key")
+                assert page.locator("#generationMode").is_disabled()
+                assert (
+                    page.locator("#generatorStatus").inner_text()
+                    == "Генератор: локальный"
+                )
+                page.select_option("#typeSelect", "db_dump")
+                page.select_option("#generationMode", "template")
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= window.innerWidth"
                 )
@@ -183,11 +238,26 @@ def main():
                 page.evaluate("showSection('tokens')")
                 page.wait_for_timeout(250)
                 assert page.locator("#tokensTable").inner_text().find("Размещён") >= 0
+                assert (
+                    "Файл уже существует. Выберите другое имя файла."
+                    in page.locator("#tokensTable").inner_text()
+                )
+                assert (
+                    "File already exists"
+                    not in page.locator("#tokensTable").inner_text()
+                )
+                assert (
+                    page.locator("#tokensTable td").first.evaluate(
+                        "element => parseFloat(getComputedStyle(element).fontSize)"
+                    )
+                    >= 14
+                )
                 page.screenshot(
                     path=str(output / f"tokens-{width}.png"), full_page=True
                 )
                 page.evaluate("showSection('events')")
                 page.locator("#eventsListFull [data-action='markEventRead']").wait_for()
+                page.wait_for_timeout(300)
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= window.innerWidth"
                 )
@@ -196,6 +266,62 @@ def main():
                 )
                 page.click("#eventsListFull [data-action='markEventRead']")
                 page.locator("#eventsListFull .event-item-read").wait_for()
+                fixture_events.append({**event, "id": 3, "read_at": None})
+                page.evaluate("loadEvents()")
+                page.locator(
+                    "#eventsListFull .event-select[data-event-id='3']"
+                ).wait_for()
+                page.locator("#selectAllEvents").check()
+                assert (
+                    page.locator("#eventsListFull .event-select:checked").count() == 2
+                )
+                page.locator("#selectAllEvents").uncheck()
+                page.locator("#eventsListFull .event-select[data-event-id='1']").check()
+                page.evaluate("loadEvents()")
+                page.wait_for_timeout(250)
+                assert page.locator(
+                    "#eventsListFull .event-select[data-event-id='1']"
+                ).is_checked()
+                page.once("dialog", lambda dialog: dialog.dismiss())
+                page.click("#deleteSelectedEvents")
+                assert page.locator("#eventsListFull .event-select").count() == 2
+                fixture_options["delete_failed"] = True
+                page.once("dialog", lambda dialog: dialog.accept())
+                page.click("#deleteSelectedEvents")
+                page.wait_for_function(
+                    "() => document.querySelector('#notification')?.textContent.includes('Хранилище событий временно недоступно')"
+                )
+                assert page.locator(
+                    "#eventsListFull .event-select[data-event-id='1']"
+                ).is_checked()
+                fixture_options["delete_failed"] = False
+                page.once("dialog", lambda dialog: dialog.accept())
+                page.click("#deleteSelectedEvents")
+                page.wait_for_function(
+                    "() => document.querySelectorAll('#eventsListFull .event-select').length === 1"
+                )
+                assert deletions[-1] == {"ids": [1]}
+                page.once("dialog", lambda dialog: dialog.accept())
+                page.click("[data-action='deleteAllEvents']")
+                page.wait_for_function(
+                    "() => document.querySelector('#eventCount').textContent === '0'"
+                )
+                assert deletions[-1] == {"clear_all": True}
+                assert page.locator("#deleteSelectedEvents").is_disabled()
+                fixture_events.append({**event, "id": 4, "read_at": None})
+                page.evaluate("loadEvents()")
+                page.wait_for_function(
+                    "() => document.querySelector('#notification')?.textContent.includes('Новых тревог: 1')"
+                )
+                assert (
+                    page.evaluate(
+                        "apiError({data: {detail: 'Unknown internal error'}})"
+                    )
+                    == "Ошибка сервера"
+                )
+                assert "выбранные события" in page.evaluate(
+                    "apiError({data: {detail: [{loc: ['body', 'ids'], msg: 'Input should be greater than 0'}]}})"
+                )
                 page.evaluate("showSection('nodes')")
                 page.fill("#scanSubnet", "10.124.21.0/24")
                 page.click("#btnScan")
@@ -217,6 +343,26 @@ def main():
                 page.evaluate("showSection('map')")
                 page.wait_for_function(
                     "() => document.querySelector('#networkMap').innerText.includes('database_backup.sql')"
+                )
+                page.screenshot(path=str(output / f"map-{width}.png"), full_page=True)
+                page.locator("#networkMap [data-token-id='example-token']").click()
+                page.wait_for_url("**/dashboard/tokens?token=example-token")
+                page.locator(
+                    "#tokensTable tr.token-highlight[data-token-id='example-token']"
+                ).wait_for()
+                page.screenshot(
+                    path=str(output / f"highlight-{width}.png"), full_page=True
+                )
+                page.reload(wait_until="domcontentloaded")
+                page.locator(
+                    "#tokensTable tr.token-highlight[data-token-id='example-token']"
+                ).wait_for()
+                page.wait_for_function(
+                    "() => !document.querySelector('#tokensTable .token-highlight')",
+                    timeout=8000,
+                )
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= window.innerWidth"
                 )
                 assert not errors, errors
                 print(f"Browser workflows and layout passed at {width}x{height}")

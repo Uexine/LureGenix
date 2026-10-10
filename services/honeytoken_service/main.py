@@ -36,21 +36,24 @@ def health():
 def generation_status():
     mode = os.getenv("GENERATION_MODE", "template")
     model = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
-    ready = mode == "template"
-    if mode == "llm":
-        try:
-            result = requests.get(
-                os.getenv("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
-                + "/api/tags",
-                timeout=3,
-            )
-            result.raise_for_status()
-            ready = model in {
-                item.get("name") for item in result.json().get("models", [])
-            }
-        except (requests.RequestException, ValueError, AttributeError):
-            ready = False
-    return {"mode": mode, "model": model, "ready": ready}
+    try:
+        result = requests.get(
+            os.getenv("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
+            + "/api/tags",
+            timeout=3,
+        )
+        result.raise_for_status()
+        llm_ready = model in {
+            item.get("name") for item in result.json().get("models", [])
+        }
+    except (requests.RequestException, ValueError, AttributeError, TypeError):
+        llm_ready = False
+    return {
+        "mode": mode,
+        "model": model,
+        "ready": mode == "template" or llm_ready,
+        "llm_ready": llm_ready,
+    }
 
 
 class GenerateRequest(BaseModel):
@@ -61,6 +64,7 @@ class GenerateRequest(BaseModel):
     filename: str = Field(default="", max_length=255)
     node_path: str = Field(default="", max_length=4096)
     target_kind: Literal["directory", "file"] = "directory"
+    generation_mode: Literal["template", "llm"] | None = None
 
 
 class DeploymentResult(BaseModel):
@@ -140,7 +144,7 @@ def generate(data: GenerateRequest):
         if not node[1]:
             raise HTTPException(409, "This legacy node has no enrolled Linux agent")
     try:
-        payload, source = generate_file(token_type)
+        payload, source = generate_file(token_type, mode=data.generation_mode)
     except GenerationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

@@ -8,18 +8,18 @@ import tarfile
 import requests
 
 TOKEN_TYPES = {
-    "ssh_key": ("Private SSH key", "id_rsa_backup"),
-    "env_file": ("Environment file", "credentials.env"),
-    "db_dump": ("SQL database backup", "database_backup.sql"),
-    "api_key": ("API key", "service-api.key"),
-    "password": ("Passwords", "credentials.txt"),
-    "bash_history": ("Shell history", "bash_history_backup.txt"),
-    "log_file": ("Access log", "access-backup.log"),
-    "backup_archive": ("Backup archive (tar.gz)", "database_backup.tar.gz"),
-    "docker_config": ("Registry configuration", "registry-config.json"),
-    "pdf": ("PDF document", "operations_notes.pdf"),
-    "docx": ("Word document", "operations_notes.docx"),
-    "txt": ("Text document", "operations_notes.txt"),
+    "ssh_key": ("Закрытый SSH-ключ", "id_rsa_backup"),
+    "env_file": ("Файл окружения", "credentials.env"),
+    "db_dump": ("Резервная копия БД (SQL)", "database_backup.sql"),
+    "api_key": ("API-ключ", "service-api.key"),
+    "password": ("Пароли", "credentials.txt"),
+    "bash_history": ("История команд", "bash_history_backup.txt"),
+    "log_file": ("Журнал доступа", "access-backup.log"),
+    "backup_archive": ("Архив резервной копии (tar.gz)", "database_backup.tar.gz"),
+    "docker_config": ("Конфигурация реестра", "registry-config.json"),
+    "pdf": ("Документ PDF", "operations_notes.pdf"),
+    "docx": ("Документ Word", "operations_notes.docx"),
+    "txt": ("Текстовый документ", "operations_notes.txt"),
 }
 
 FORMAT_INSTRUCTIONS = {
@@ -73,49 +73,52 @@ def llm_content(token_type):
         )
         if response.status_code == 404:
             raise GenerationError(
-                f"Local model not found; load OLLAMA_MODEL={model} into Ollama first"
+                f"Локальная модель {model} не найдена. Загрузите её в Ollama."
             )
         response.raise_for_status()
         result = response.json()
         if result.get("error"):
-            raise GenerationError("Local Ollama generation failed; check Ollama logs")
+            raise GenerationError("Ошибка генерации Ollama. Проверьте журнал сервиса.")
         if result.get("done") is not True or result.get("done_reason") == "length":
-            raise GenerationError("LLM response was truncated; try generating again")
+            raise GenerationError("Ответ модели обрезан. Повторите генерацию.")
         content = json.loads(result["message"]["content"])["content"]
         if (
             not isinstance(content, str)
             or not content.strip()
             or len(content.encode("utf-8")) > 100_000
         ):
-            raise GenerationError("LLM returned empty or oversized file content")
+            raise GenerationError("Модель вернула пустой или слишком большой файл.")
         if token_type == "docker_config" and not isinstance(json.loads(content), dict):
-            raise GenerationError("LLM returned an invalid registry configuration")
+            raise GenerationError("Модель вернула некорректную конфигурацию реестра.")
         if token_type in ("db_dump", "backup_archive"):
             if (
                 "CREATE TABLE" not in content.upper()
                 or "INSERT INTO" not in content.upper()
             ):
-                raise GenerationError("LLM response does not contain a SQL backup")
+                raise GenerationError("Ответ модели не содержит резервную копию SQL.")
         return content.strip() + "\n"
     except GenerationError:
         raise
     except requests.exceptions.Timeout as exc:
         raise GenerationError(
-            "Local model timed out; try a smaller model or increase LLM_TIMEOUT_SECONDS"
+            "Модель не ответила вовремя. Выберите меньшую модель или увеличьте LLM_TIMEOUT_SECONDS."
         ) from exc
     except requests.exceptions.ConnectionError as exc:
         raise GenerationError(
-            "Cannot connect to local Ollama; check the ollama service and OLLAMA_BASE_URL"
+            "Нет соединения с локальной Ollama. Проверьте сервис и OLLAMA_BASE_URL."
         ) from exc
     except Exception as exc:
         raise GenerationError(
-            f"Local LLM generation failed ({type(exc).__name__}); check Ollama and OLLAMA_MODEL"
+            "Не удалось сгенерировать файл. Проверьте Ollama и OLLAMA_MODEL."
         ) from exc
 
 
-def generate_file(token_type):
+def generate_file(token_type, mode=None):
     if token_type not in TOKEN_TYPES:
-        raise GenerationError("Unsupported token type")
+        raise GenerationError("Неподдерживаемый тип приманки.")
+    mode = mode or os.getenv("GENERATION_MODE", "template")
+    if mode not in ("llm", "template"):
+        raise GenerationError("Выберите режим генерации: шаблоны или LLM.")
     if token_type == "ssh_key":
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
@@ -131,9 +134,6 @@ def generate_file(token_type):
     if token_type == "password":
         return ("backup_admin:" + secrets.token_urlsafe(18) + "\n").encode(), "local"
 
-    mode = os.getenv("GENERATION_MODE", "template")
-    if mode not in ("llm", "template"):
-        raise GenerationError("GENERATION_MODE must be llm or template")
     source = mode
     content = (
         template_content(token_type) if mode == "template" else llm_content(token_type)

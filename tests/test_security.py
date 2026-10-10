@@ -85,6 +85,41 @@ class GatewaySecurityTests(unittest.TestCase):
     def test_public_event_endpoint_is_not_public(self):
         self.assertEqual(self.client.post("/api/event", json={}).status_code, 401)
 
+    def test_event_deletion_requires_administrator_token(self):
+        with patch.object(gateway, "forward_request") as forward:
+            self.assertEqual(
+                self.client.request(
+                    "DELETE", "/api/events", json={"clear_all": True}
+                ).status_code,
+                401,
+            )
+            self.assertEqual(
+                self.client.request(
+                    "DELETE",
+                    "/api/events",
+                    headers=self.headers,
+                    json={"clear_all": True},
+                ).status_code,
+                401,
+            )
+            forward.assert_not_called()
+
+    def test_authorized_event_deletion_is_forwarded(self):
+        gateway.app.dependency_overrides[gateway.verify_token] = lambda: {"sub": "7"}
+        try:
+            with patch.object(
+                gateway, "forward_request", return_value=({"deleted": 2}, 200)
+            ) as forward:
+                response = self.client.request(
+                    "DELETE", "/api/events", json={"ids": [1, 2]}
+                )
+            self.assertEqual(response.status_code, 200)
+            forward.assert_called_once_with(
+                gateway.EVENT_SERVICE, "/events", "DELETE", data={"ids": [1, 2]}
+            )
+        finally:
+            gateway.app.dependency_overrides.pop(gateway.verify_token, None)
+
     def test_invalid_json_is_rejected_before_backend_access(self):
         with patch.object(gateway, "forward_request") as forward:
             response = self.client.post(
@@ -275,6 +310,61 @@ class EventSecurityTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as caught:
                 events.add_event(self.data, BackgroundTasks())
         self.assertEqual(caught.exception.status_code, 503)
+
+    def test_event_deletion_requires_explicit_nonempty_selection(self):
+        client = TestClient(events.app)
+        for payload in (
+            {},
+            {"ids": []},
+            {"ids": [-1]},
+            {"ids": [1], "clear_all": True},
+            {"ids": [1] * 501},
+            {"clear_all": True, "extra": "field"},
+        ):
+            with (
+                self.subTest(payload=payload),
+                patch.object(events, "get_db") as connect,
+            ):
+                self.assertEqual(
+                    client.request("DELETE", "/events", json=payload).status_code, 422
+                )
+                connect.assert_not_called()
+
+    def test_selected_event_deletion_does_not_touch_tokens(self):
+        connection, cursor = database([])
+        cursor.rowcount = 2
+        background = MagicMock()
+        with patch.object(events, "get_db", return_value=connection):
+            result = events.delete_events(events.DeleteEvents(ids=[1, 2]), background)
+        cursor.execute.assert_called_once_with(
+            "DELETE FROM event_log WHERE id = ANY(%s)", ([1, 2],)
+        )
+        self.assertEqual(result["deleted"], 2)
+        background.add_task.assert_called_once_with(
+            events.broadcast_event, {"type": "events_deleted"}
+        )
+
+    def test_clear_all_preserves_event_sequence(self):
+        connection, cursor = database([])
+        cursor.rowcount = 10
+        with patch.object(events, "get_db", return_value=connection):
+            result = events.delete_events(
+                events.DeleteEvents(clear_all=True), MagicMock()
+            )
+        cursor.execute.assert_called_once_with("DELETE FROM event_log")
+        self.assertEqual(result["deleted"], 10)
+
+    def test_deletion_storage_failure_returns_russian_error(self):
+        with patch.object(
+            events,
+            "get_db",
+            side_effect=events.psycopg2.OperationalError("secret in database error"),
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                events.delete_events(events.DeleteEvents(ids=[1]), MagicMock())
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertIn("Не удалось очистить журнал", caught.exception.detail)
+        self.assertNotIn("secret", caught.exception.detail)
 
 
 class ConfigurationTests(unittest.TestCase):
