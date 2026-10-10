@@ -28,6 +28,9 @@ services:
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
       - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_SECRET=${ADMIN_SECRET:-}
+      - BOOTSTRAP_ADMIN_USERNAME=${BOOTSTRAP_ADMIN_USERNAME:-admin}
+      - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-}
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     networks:
       - luregenix
@@ -105,10 +108,7 @@ services:
     environment:
       - JWT_SECRET=${JWT_SECRET}
       - ADMIN_SECRET=${ADMIN_SECRET:-}
-      - BOOTSTRAP_ADMIN_USERNAME=${BOOTSTRAP_ADMIN_USERNAME:-admin}
-      - BOOTSTRAP_ADMIN_PASSWORD=${BOOTSTRAP_ADMIN_PASSWORD:-}
       - AGENT_SECRET=${AGENT_SECRET:-}
-      - ADMIN_SECRET=${ADMIN_SECRET:-}
       - LLM_TIMEOUT_SECONDS=${LLM_TIMEOUT_SECONDS:-180}
     command: uvicorn main:app --host 0.0.0.0 --port 8000
     healthcheck:
