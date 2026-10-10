@@ -104,6 +104,7 @@ def main():
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel="msedge", headless=True)
             for width, height in [(1440, 1000), (390, 844)]:
+                event["id"] = 1
                 event["read_at"] = None
                 context = browser.new_context(
                     viewport={"width": width, "height": height}
@@ -139,6 +140,18 @@ def main():
                 page.wait_for_function(
                     "() => document.querySelector('#nodeSelect').options.length === 2"
                 )
+                page.wait_for_function(
+                    "() => document.querySelector('#eventCount').textContent === '1'"
+                )
+                event["id"] = 2
+                page.wait_for_function(
+                    "() => document.querySelector('#notification')?.textContent.includes('/var/www/html/database_backup.sql')",
+                    timeout=10000,
+                )
+                page.evaluate("document.querySelector('#notification').remove(); loadEvents()")
+                page.wait_for_timeout(300)
+                assert page.locator("#notification").count() == 0
+                event["id"] = 1
                 page.select_option("#nodeSelect", "9")
                 page.fill("#tokenNodePath", "/home/app")
                 page.fill("#tokenFilename", "backup.sql")

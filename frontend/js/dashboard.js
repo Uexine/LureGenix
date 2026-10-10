@@ -308,11 +308,25 @@
         });
     }
 
+    var eventsLoading = false;
+    var eventsInitialized = false;
+    var latestEventId = 0;
     async function loadEvents() {
+        if (eventsLoading || !getToken()) return;
+        eventsLoading = true;
+        try {
         const res = await apiGet("events");
         if (res.status === 401) return;
         if (!res.ok) { showNotification("Журнал событий недоступен", "error"); return; }
         const data = Array.isArray(res.data) ? res.data : [];
+        // Use the same cursor for socket refreshes and polling to avoid duplicate alerts.
+        const newAlerts = data.filter(function (event) {
+            return Number(event.id) > latestEventId && alertActions.indexOf(event.action) >= 0;
+        });
+        const notify = eventsInitialized && newAlerts.length > 0;
+        data.forEach(function (event) { latestEventId = Math.max(latestEventId, Number(event.id) || 0); });
+        eventsInitialized = true;
+        if (notify) showNotification("Новых тревог: " + newAlerts.length + ". " + (newAlerts[0].file_path || newAlerts[0].token_id || ""), "error");
         document.getElementById("eventCount").textContent = data.length;
 
         const alertCount = data.filter(function (e) { return alertActions.indexOf(e.action) >= 0; }).length;
@@ -332,6 +346,7 @@
 
         document.getElementById("eventsList").innerHTML = html;
         document.getElementById("eventsListFull").innerHTML = html;
+        } finally { eventsLoading = false; }
     }
 
     function eventRow(event) {
@@ -428,6 +443,7 @@
         ws.onopen = function () {
             wsReconnectCount = 0;
             updateWsStatus(true);
+            loadEvents();
         };
         ws.onmessage = function (ev) {
             var payload = {};
@@ -436,9 +452,6 @@
             loadEvents();
             loadTokens();
             loadNetworkMap();
-            if (alertActions.indexOf(payload.action) >= 0) {
-                showNotification("Тревога: " + (payload.token_id || ""), "error");
-            }
         };
         ws.onerror = function () { updateWsStatus(false); };
         ws.onclose = function (event) {
@@ -492,8 +505,8 @@
     setInterval(function () {
         loadNodes();
         loadTokens();
-        loadEvents();
     }, 30000);
+    setInterval(loadEvents, 5000);
 
     async function loadNetworkMap() {
         var container = document.getElementById("networkMap");
