@@ -3,7 +3,7 @@ function getToken() {
 }
 
 function getUsername() {
-    return sessionStorage.getItem("username") || "Admin";
+    return sessionStorage.getItem("username") || "Администратор";
 }
 
 function clearAuth() {
@@ -89,8 +89,14 @@ async function api(path, {method = "GET", body} = {}) {
     }
 }
 
+const pendingGets = new Map();
+
 function apiGet(path) {
-    return api(path);
+    // Views and socket updates can request the same data at the same time.
+    if (!pendingGets.has(path)) {
+        pendingGets.set(path, api(path).finally(() => pendingGets.delete(path)));
+    }
+    return pendingGets.get(path);
 }
 
 function apiPost(path, body) {

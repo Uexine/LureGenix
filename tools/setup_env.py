@@ -16,13 +16,16 @@ def read_env(path):
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, value = line.split("=", 1)
-                values[key.strip()] = value.strip().strip("\"'")
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                    value = value[1:-1]
+                values[key.strip()] = value
     return values
 
 
 def configure(path, example, lan=False, volume=None, local=False, recovered=None):
-    values = read_env(example)
-    values.update(recovered or {})
+    defaults = read_env(example)
+    values = {**defaults, **(recovered or {})}
     values.update(
         {
             key: value
@@ -30,6 +33,8 @@ def configure(path, example, lan=False, volume=None, local=False, recovered=None
             if value or key not in (recovered or {})
         }
     )
+    # The example is the configuration schema; obsolete provider keys are not retained.
+    values = {key: values[key] for key in defaults}
     for key in (
         "DB_PASSWORD",
         "APP_DB_PASSWORD",
@@ -53,22 +58,24 @@ def configure(path, example, lan=False, volume=None, local=False, recovered=None
         values["POSTGRES_DATA_VOLUME"] = volume
     if volume and values.get("POSTGRES_DATA_VOLUME") != volume:
         raise ValueError(
-            "POSTGRES_DATA_VOLUME differs from the existing database; refusing to switch volumes"
+            "POSTGRES_DATA_VOLUME отличается от тома существующей БД. Смена тома отменена."
         )
     if len(values["JWT_SECRET"]) < 32 or len(values["AGENT_SECRET"]) < 32:
         raise ValueError(
-            "JWT_SECRET and AGENT_SECRET must contain at least 32 characters"
+            "JWT_SECRET и AGENT_SECRET должны содержать не менее 32 символов."
         )
     if values.get("APP_DB_USER") == values.get("DB_USER"):
-        raise ValueError("APP_DB_USER must differ from the PostgreSQL owner DB_USER")
+        raise ValueError(
+            "APP_DB_USER должен отличаться от владельца PostgreSQL DB_USER."
+        )
     if not re.fullmatch(r"luregenix_[a-z0-9_]{1,40}", values.get("APP_DB_USER", "")):
-        raise ValueError("APP_DB_USER must be a dedicated luregenix_* role")
+        raise ValueError("APP_DB_USER должен быть отдельной ролью вида luregenix_*.")
     if any(
         "\n" in value or "\r" in value or "\0" in value or "$" in value or "#" in value
         for value in values.values()
     ):
         raise ValueError(
-            "Configuration values must not contain newline, NUL, '$' or '#'; use URL-safe secrets"
+            "Настройки не должны содержать переносы строк, NUL, '$' или '#'. Используйте URL-безопасные секреты."
         )
     temporary = path.with_suffix(".env.tmp")
     descriptor = os.open(
@@ -110,7 +117,7 @@ def existing_database_volume():
             return None
         if len(containers) != 1:
             raise ValueError(
-                "Multiple database containers found; resolve the duplicate before configuring"
+                "Найдено несколько контейнеров БД. Устраните дубликат перед настройкой."
             )
         result = subprocess.run(
             [
@@ -129,12 +136,12 @@ def existing_database_volume():
         return None
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise ValueError(
-            "Cannot inspect the existing Docker database; check Docker access"
+            "Не удалось проверить существующую БД. Проверьте доступ к Docker."
         ) from exc
     volume = result.stdout.strip()
     if not volume:
         raise ValueError(
-            "Existing database uses a bind mount; preserve it explicitly in Compose"
+            "Существующая БД использует bind mount. Сохраните это подключение явно в Compose."
         )
     return volume
 
@@ -289,7 +296,7 @@ def main():
             "Есть существующая БД, но нет .env. Восстановите файл из копии или выполните python3 tools/setup_env.py --recover-env."
         )
     if args.volume and volume and args.volume != volume:
-        parser.error("The selected volume does not match the existing database")
+        parser.error("Выбранный том не совпадает с томом существующей БД.")
     try:
         recovered = recover_container_env() if args.recover_env else None
         current = read_env(Path(".env"))
@@ -325,6 +332,8 @@ def main():
         )
     except ValueError as exc:
         parser.error(str(exc))
+    except OSError:
+        parser.error("Не удалось сохранить .env. Проверьте каталог и права доступа.")
     print("Конфигурация готова: .env. Не публикуйте и не передавайте этот файл.")
     if args.recover_env:
         print(
@@ -336,7 +345,7 @@ def main():
         print("Пароли существующих администраторов НЕ меняются.")
     if args.lan:
         print(
-            "HTTP is exposed on the LAN. Use only for a trusted isolated lab; use TLS for other networks."
+            "HTTP доступен в локальной сети. Используйте только в изолированном стенде; в других сетях нужен HTTPS."
         )
 
 

@@ -12,8 +12,9 @@
         events:    { title: "События", subtitle: "Журнал событий" },
         map:       { title: "Карта сети", subtitle: "Ноды и приманки на них" },
     };
-    var validSectionIds = ["dashboard", "nodes", "tokens", "events", "map"];
-    var alertActions = ["alert", "compromise", "open", "access", "modify", "delete", "monitor_error", "deployment_failed"];
+    const validSectionIds = Object.keys(sections);
+    const alertActions = ["alert", "compromise", "open", "access", "modify", "delete", "monitor_error", "deployment_failed"];
+    let nodesData = [];
 
     function getSectionFromPath() {
         var path = (window.location.pathname || "").replace(/\/$/, "");
@@ -34,10 +35,10 @@
     }
 
     document.addEventListener("DOMContentLoaded", function () {
-        const actions = {toggleSidebar: function () { window.toggleSidebar(); }, logout: logout,
+        const actions = {toggleSidebar: toggleSidebar, logout: logout,
             generateToken: generateToken, loadNodes: loadNodes, loadTokens: loadTokens,
             loadEvents: loadEvents, loadNetworkMap: loadNetworkMap, markAllEventsRead: markAllEventsRead,
-            scanNetwork: scanNetwork, showMap: function () { showSection("map"); }, retryToken: retryToken,
+            scanNetwork: scanNetwork, showMap: function () { updateUrlForSection("map", false); showSection("map"); }, retryToken: retryToken,
             markEventRead: markEventRead,
             focusToken: openToken,
             deleteSelectedEvents: function () { deleteEvents(false); },
@@ -82,7 +83,7 @@
                     document.getElementById("passwordDialog").close();
                     showNotification("Пароль изменён", "success");
                 } else {
-                    showNotification("Не удалось изменить пароль: проверьте текущий пароль и длину нового", "error");
+                    showNotification(apiError(result, "Не удалось изменить пароль"), "error");
                 }
             } finally { button.disabled = false; }
         });
@@ -128,7 +129,6 @@
         loadGenerationStatus();
         loadTokens();
         loadEvents();
-        loadNetworkMap();
         initWebSocket();
         document.getElementById("deploymentMode").addEventListener("change", function () {
             document.getElementById("tokenNodePath").disabled = this.value === "auto";
@@ -179,7 +179,7 @@
 
     async function retryToken(tokenId) {
         var result = await api("tokens/" + encodeURIComponent(tokenId) + "/retry", {method: "POST", body: {}});
-        showNotification(result.ok ? "Размещение поставлено в очередь повторно" : "Повторное размещение недоступно", result.ok ? "success" : "error");
+        showNotification(result.ok ? "Размещение поставлено в очередь повторно" : apiError(result, "Повторное размещение недоступно"), result.ok ? "success" : "error");
         loadTokens();
     }
 
@@ -221,6 +221,8 @@
         if (res.status === 401) return;
         if (!res.ok) { showNotification("Сервис узлов недоступен", "error"); return; }
         const data = Array.isArray(res.data) ? res.data : [];
+        nodesData = data;
+        renderNetworkMap();
         const tbody = document.getElementById("nodesTable");
         const select = document.getElementById("nodeSelect");
         var selectedNode = select.value;
@@ -234,7 +236,7 @@
         if (data.some(function (n) { return String(n.id) === selectedNode && n.enrolled !== false; })) select.value = selectedNode;
 
         if (data.length === 0) {
-            tbody.innerHTML = "<tr><td colspan=\"5\" style=\"text-align:center;color:var(--text-secondary);\">Нет данных о нодах</td></tr>";
+            tbody.innerHTML = "<tr><td colspan=\"5\" class=\"empty-state\">Нет данных о нодах</td></tr>";
             return;
         }
         tbody.innerHTML = data.map(function (node) {
@@ -321,7 +323,7 @@
         if (!tbody) return;
         document.getElementById("tokenCount").textContent = tokensData.length;
         if (list.length === 0) {
-            tbody.innerHTML = "<tr><td colspan=\"5\" style=\"text-align:center;color:var(--text-secondary);\">Нет honeytoken'ов" + (tokensFilter.search || tokensFilter.type ? " по фильтру" : "") + "</td></tr>";
+            tbody.innerHTML = "<tr><td colspan=\"5\" class=\"empty-state\">Нет honeytoken'ов" + (tokensFilter.search || tokensFilter.type ? " по фильтру" : "") + "</td></tr>";
             return;
         }
         tbody.innerHTML = list.map(function (t) {
@@ -376,6 +378,7 @@
             typeSelect.value = tokensFilter.type;
         }
         renderTokensTable();
+        renderNetworkMap();
         document.querySelectorAll(".tokens-table thead .sortable").forEach(function (th) {
             th.onclick = function () { sortTokensBy(th.getAttribute("data-sort")); };
         });
@@ -417,7 +420,7 @@
             }
 
             const html = data.length === 0
-                ? "<div style=\"text-align:center;padding:40px;color:var(--text-secondary);\">Нет событий</div>"
+                ? "<div class=\"empty-state\">Нет событий</div>"
                 : data.map(event => eventRow(event, false)).join("");
 
             document.getElementById("eventsList").innerHTML = html;
@@ -434,8 +437,8 @@
         const action = event.action || event.type || "event";
         var displayName = (event.source_hostname && event.source_hostname.trim()) ? event.source_hostname.trim() : (event.token_id || event.source || "-");
         let icon = "fa-info-circle", color = "var(--primary)";
-        if (action === "heartbeat") { icon = "fa-heartbeat"; color = "var(--secondary)"; }
-        else if (alertActions.indexOf(action) >= 0) { icon = "fa-exclamation-triangle"; color = "var(--danger)"; }
+        if (action === "heartbeat") { icon = "fa-heartbeat"; color = "var(--green)"; }
+        else if (alertActions.indexOf(action) >= 0) { icon = "fa-exclamation-triangle"; color = "var(--red)"; }
         var readClass = (event.read_at) ? " event-item-read" : "";
         const actionName = {open: "Открытие", access: "Чтение", modify: "Изменение", delete: "Удаление", deployed: "Размещение", deployment_failed: "Ошибка размещения", monitor_error: "Ошибка мониторинга", heartbeat: "Связь с агентом", alert: "Тревога", compromise: "Компрометация"}[action] || "Событие";
         return "<div class=\"event-item" + readClass + "\" data-event-id=\"" + escapeHtml(event.id || "") + "\">" +
@@ -534,10 +537,8 @@
         if (res.ok) {
             showNotification("Приманка создана и ожидает размещения агентом", "success");
             if (document.getElementById("tokenName")) document.getElementById("tokenName").value = "";
-            /* Каталог и путь на ноде не очищаем — удобно создавать несколько приманок подряд */
             loadTokens();
             loadEvents();
-            loadNetworkMap();
         } else {
             showNotification(apiError(res, "Ошибка создания приманки"), "error");
         }
@@ -563,7 +564,6 @@
             if (!payload || (!payload.action && payload.type !== "events_deleted")) return;
             loadEvents();
             loadTokens();
-            loadNetworkMap();
         };
         ws.onerror = function () { updateWsStatus(false); };
         ws.onclose = function (event) {
@@ -580,31 +580,19 @@
         var el = document.getElementById("wsStatus");
         var text = document.getElementById("wsStatusText");
         if (!el) return;
-        el.className = "status-badge " + (connected ? "status-active" : "status-warning");
+        el.className = "status-badge ws-badge " + (connected ? "status-active" : "status-warning");
         if (text) text.textContent = connected ? "WebSocket подключен" : "WebSocket отключен";
     }
 
     function showNotification(message, type) {
-    type = type || "info";
-    var colors = {success: "#10b981", error: "#ef4444", info: "#3b82f6"};
-    var bg = colors[type] || colors.info;
-
-    var n = document.createElement("div");
-    document.getElementById("notification")?.remove();
-    n.id = "notification";
-    n.style.cssText =
-        "position:fixed;top:20px;right:20px;" +
-        "padding:16px 24px;" +
-        "background:" + bg + ";" +
-        "color:#ffffff;" +
-        "font-weight:500;" +
-        "border-radius:6px;max-width:calc(100% - 40px);box-sizing:border-box;overflow-wrap:anywhere;" +
-        "box-shadow:0 10px 15px -3px rgba(0,0,0,0.3);" +
-        "z-index:9999;" +
-        "opacity:1;";
-    n.textContent = message;
-    document.body.appendChild(n);
-    setTimeout(function () { n.remove(); }, 3000);
+        const notification = document.createElement("div");
+        document.getElementById("notification")?.remove();
+        notification.id = "notification";
+        notification.className = "notification notification-" + (["success", "error"].includes(type) ? type : "info");
+        notification.setAttribute("role", type === "error" ? "alert" : "status");
+        notification.textContent = message;
+        document.body.appendChild(notification);
+        setTimeout(function () { notification.remove(); }, 3000);
     }
 
     function logout() {
@@ -621,22 +609,22 @@
     setInterval(loadEvents, 5000);
 
     async function loadNetworkMap() {
+        await loadNodes();
+        await loadTokens();
+    }
+
+    function renderNetworkMap() {
         var container = document.getElementById("networkMap");
         if (!container) return;
-        var nodesRes = await apiGet("nodes");
-        var tokensRes = await apiGet("tokens");
-        if (nodesRes.status === 401 || tokensRes.status === 401) return;
-        if (!nodesRes.ok || !tokensRes.ok) {
-            container.textContent = "Карта сети недоступна";
+        if (!nodesData.length && !tokensData.length) {
+            container.textContent = "Нет зарегистрированных серверов";
             return;
         }
-        var nodes = Array.isArray(nodesRes.data) ? nodesRes.data : [];
-        var tokens = Array.isArray(tokensRes.data) ? tokensRes.data : [];
         var byNode = {};
-        nodes.forEach(function (n) {
+        nodesData.forEach(function (n) {
             byNode[n.id] = { node: n, tokens: [] };
         });
-        tokens.forEach(function (t) {
+        tokensData.forEach(function (t) {
             var nid = t.node_id || "unknown";
             if (!byNode[nid]) byNode[nid] = { node: { id: nid, hostname: "node_" + nid, ip: "-" }, tokens: [] };
             byNode[nid].tokens.push({ token: t, path: t.deployed_path || t.path, name: t.name });
@@ -660,18 +648,8 @@
         }).join("");
     }
 
-    window.toggleSidebar = function () {
+    function toggleSidebar() {
         document.getElementById("sidebar").classList.toggle("collapsed");
         document.getElementById("mainContent").classList.toggle("expanded");
-    };
-    window.showSection = showSection;
-    window.loadNodes = loadNodes;
-    window.loadTokens = loadTokens;
-    window.loadEvents = loadEvents;
-    window.loadNetworkMap = loadNetworkMap;
-    window.generateToken = generateToken;
-    window.markAllEventsRead = markAllEventsRead;
-    window.sortTokensBy = sortTokensBy;
-    window.applyTokensFilter = applyTokensFilter;
-    window.logout = logout;
+    }
 })();

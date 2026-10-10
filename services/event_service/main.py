@@ -12,7 +12,6 @@ from uuid import UUID
 import psycopg2
 from fastapi import (
     BackgroundTasks,
-    FastAPI,
     HTTPException,
     WebSocket,
     WebSocketDisconnect,
@@ -20,6 +19,7 @@ from fastapi import (
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, model_validator
 from starlette.concurrency import run_in_threadpool
 
+from common.api import create_app
 from common.database import connect as get_db
 from common.database import utc_timestamp
 
@@ -36,7 +36,7 @@ async def lifespan(app):
             await task
 
 
-app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+app = create_app(lifespan=lifespan, database=lambda: get_db())
 logger = logging.getLogger(__name__)
 ws_subscribers = []
 EVENT_RETENTION_DAYS = int(os.getenv("EVENT_RETENTION_DAYS", "30"))
@@ -83,13 +83,6 @@ class Event(BaseModel):
     observed_at: datetime | None = None
 
 
-@app.get("/health")
-def health():
-    with closing(get_db()) as conn, conn.cursor() as cur:
-        cur.execute("SELECT 1")
-    return {"status": "ok"}
-
-
 @app.post("/event")
 def add_event(data: Event, background_tasks: BackgroundTasks):
     try:
@@ -103,7 +96,7 @@ def add_event(data: Event, background_tasks: BackgroundTasks):
                     (data.token_id, data.node_id),
                 )
                 if cur.fetchone() is None:
-                    raise HTTPException(403, "Token does not belong to this node")
+                    raise HTTPException(403, "Приманка не принадлежит этому серверу.")
             cur.execute(
                 f"INSERT INTO event_log(event_id,node_id,token_id,action,file_path,source_hostname,observed_at) VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (event_id) WHERE event_id IS NOT NULL DO NOTHING RETURNING {FIELDS}",
                 (
@@ -130,7 +123,7 @@ def add_event(data: Event, background_tasks: BackgroundTasks):
                     or row[1:4] != (data.token_id, data.action, data.file_path)
                 ):
                     raise HTTPException(
-                        409, "Event identifier conflicts with another event"
+                        409, "Идентификатор уже используется другим событием."
                     )
             if created:
                 integrity = {
@@ -150,7 +143,7 @@ def add_event(data: Event, background_tasks: BackgroundTasks):
         return {"status": "ok", "event": result}
     except psycopg2.Error as exc:
         logger.error("Event storage failed (%s)", type(exc).__name__)
-        raise HTTPException(503, "Event storage unavailable") from exc
+        raise HTTPException(503, "Хранилище событий временно недоступно.") from exc
 
 
 async def broadcast_event(event):
@@ -188,7 +181,7 @@ def event_mark_read(event_id: int):
             (event_id,),
         )
         if not cur.fetchone():
-            raise HTTPException(404, "Event not found")
+            raise HTTPException(404, "Событие не найдено.")
     return {"status": "ok"}
 
 

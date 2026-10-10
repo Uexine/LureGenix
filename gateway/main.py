@@ -11,9 +11,9 @@ import jwt
 import requests
 import websockets
 from fastapi import (
+    APIRouter,
     Body,
     Depends,
-    FastAPI,
     Header,
     HTTPException,
     Request,
@@ -22,6 +22,8 @@ from fastapi import (
 )
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.concurrency import run_in_threadpool
+
+from common.api import create_app
 
 AUTH_SERVICE = "http://auth_service:8000"
 EVENT_SERVICE = "http://event_service:8000"
@@ -38,39 +40,40 @@ generation_limit = asyncio.Semaphore(2)
 @asynccontextmanager
 async def lifespan(app):
     if len(JWT_SECRET) < 32 or len(os.getenv("AGENT_SECRET", "")) < 32:
-        raise RuntimeError(
-            "Run python3 tools/setup_env.py to configure private secrets"
-        )
+        raise RuntimeError("Настройте секреты командой python3 tools/setup_env.py.")
     yield
 
 
-app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = create_app(lifespan=lifespan)
+api = APIRouter(prefix="/api")
 
 
 def forward_request(service_url, path, method, data=None, headers=None, timeout=5):
     if method not in ("GET", "POST", "PUT", "DELETE"):
-        raise HTTPException(405, "Method not allowed")
+        raise HTTPException(405, "Метод запроса не поддерживается.")
     try:
         response = requests.request(
             method, service_url + path, json=data, headers=headers, timeout=timeout
         )
     except requests.RequestException as exc:
-        raise HTTPException(503, "Backend service unavailable") from exc
+        raise HTTPException(
+            503, "Сервис временно недоступен. Повторите попытку."
+        ) from exc
     if not response.content:
         return {}, response.status_code
     try:
         return response.json(), response.status_code
     except ValueError:
-        return {"detail": "Invalid response from backend service"}, 502
+        return {"detail": "Сервис вернул некорректный ответ."}, 502
 
 
 def proxy_request(service, path, method="GET", **kwargs):
     result, status = forward_request(service, path, method, **kwargs)
     if not 200 <= status < 300:
         detail = (
-            result.get("detail", "Backend request failed")
+            result.get("detail", "Не удалось выполнить запрос к сервису.")
             if isinstance(result, dict)
-            else "Backend request failed"
+            else "Не удалось выполнить запрос к сервису."
         )
         raise HTTPException(status, detail)
     return result
@@ -84,26 +87,28 @@ def decode_token(token):
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     if not credentials:
-        raise HTTPException(401, "Authorization header missing")
+        raise HTTPException(401, "Необходим вход в систему.")
     try:
         return decode_token(credentials.credentials)
     except jwt.PyJWTError as exc:
-        raise HTTPException(401, "Invalid or expired token") from exc
+        raise HTTPException(
+            401, "Сессия недействительна или истекла. Войдите снова."
+        ) from exc
 
 
 def verify_enrollment(x_agent_secret: str = Header(default="")):
     expected = os.getenv("AGENT_SECRET", "")
     if not expected:
-        raise HTTPException(503, "Enrollment is not configured")
+        raise HTTPException(503, "Регистрация агентов не настроена.")
     if not secrets.compare_digest(x_agent_secret.encode(), expected.encode()):
-        raise HTTPException(401, "Invalid enrollment secret")
+        raise HTTPException(401, "Неверный секрет регистрации агента.")
 
 
 def verify_agent(
     x_agent_id: str = Header(default=""), x_agent_token: str = Header(default="")
 ):
     if not x_agent_id or not x_agent_token:
-        raise HTTPException(401, "Agent identity and credential required")
+        raise HTTPException(401, "Необходимы идентификатор и ключ агента.")
     return proxy_request(
         DISCOVERY_SERVICE,
         "/authenticate",
@@ -116,9 +121,9 @@ async def json_object(request):
     try:
         data = await request.json()
     except ValueError as exc:
-        raise HTTPException(400, "A JSON object is required") from exc
+        raise HTTPException(400, "Ожидается объект JSON.") from exc
     if not isinstance(data, dict):
-        raise HTTPException(400, "A JSON object is required")
+        raise HTTPException(400, "Ожидается объект JSON.")
     return data
 
 
@@ -134,30 +139,27 @@ def check_login_limit(request, username):
         for expired_key in expired:
             login_attempts.pop(expired_key, None)
         if key not in login_attempts and len(login_attempts) >= 1000:
-            raise HTTPException(429, "Too many login requests")
+            raise HTTPException(429, "Слишком много запросов входа. Подождите минуту.")
         attempts = [stamp for stamp in login_attempts.get(key, []) if stamp > now - 60]
         if len(attempts) >= 10:
-            raise HTTPException(429, "Too many login attempts; wait one minute")
+            raise HTTPException(429, "Слишком много попыток входа. Подождите минуту.")
         login_attempts[key] = attempts + [now]
 
 
 @app.get("/health")
-@app.get("/api/health")
+@api.get("/health")
 def health():
     return {"status": "ok"}
 
 
-@app.get("/readiness")
-@app.get("/api/readiness")
+@api.get("/readiness")
 def readiness():
     for service in (AUTH_SERVICE, TOKEN_SERVICE, EVENT_SERVICE, DISCOVERY_SERVICE):
         proxy_request(service, "/health")
     return {"status": "ok"}
 
 
-# Root aliases keep internal clients compatible with the public /api/ routes.
-@app.post("/login")
-@app.post("/api/login")
+@api.post("/login")
 async def login(request: Request):
     data = await json_object(request)
     check_login_limit(request, data.get("username", ""))
@@ -166,12 +168,11 @@ async def login(request: Request):
     )
 
 
-@app.post("/generate")
-@app.post("/api/generate")
+@api.post("/generate")
 async def generate(request: Request, _: dict = Depends(verify_token)):
     data = await json_object(request)
     if generation_limit.locked():
-        raise HTTPException(429, "Generation capacity exceeded; try again later")
+        raise HTTPException(429, "Генератор занят. Повторите попытку позже.")
     async with generation_limit:
         return await run_in_threadpool(
             proxy_request,
@@ -183,56 +184,47 @@ async def generate(request: Request, _: dict = Depends(verify_token)):
         )
 
 
-@app.get("/events")
-@app.get("/api/events")
+@api.get("/events")
 def events(_: dict = Depends(verify_token)):
     return proxy_request(EVENT_SERVICE, "/events")
 
 
-@app.delete("/events")
-@app.delete("/api/events")
+@api.delete("/events")
 def delete_events(data: dict, _: dict = Depends(verify_token)):
     return proxy_request(EVENT_SERVICE, "/events", "DELETE", data=data)
 
 
-@app.get("/events/unread_count")
-@app.get("/api/events/unread_count")
+@api.get("/events/unread_count")
 def events_unread_count(_: dict = Depends(verify_token)):
     return proxy_request(EVENT_SERVICE, "/events/unread_count")
 
 
-@app.put("/events/{event_id}/read")
-@app.put("/api/events/{event_id}/read")
+@api.put("/events/{event_id}/read")
 def event_mark_read(event_id: int, _: dict = Depends(verify_token)):
     return proxy_request(EVENT_SERVICE, f"/events/{event_id}/read", "PUT")
 
 
-@app.put("/events/read_all")
-@app.put("/api/events/read_all")
+@api.put("/events/read_all")
 def events_mark_all_read(_: dict = Depends(verify_token)):
     return proxy_request(EVENT_SERVICE, "/events/read_all", "PUT")
 
 
-@app.get("/tokens")
-@app.get("/api/tokens")
+@api.get("/tokens")
 def tokens(_: dict = Depends(verify_token)):
     return proxy_request(TOKEN_SERVICE, "/tokens")
 
 
-@app.get("/token-types")
-@app.get("/api/token-types")
+@api.get("/token-types")
 def token_types(_: dict = Depends(verify_token)):
     return proxy_request(TOKEN_SERVICE, "/token-types")
 
 
-@app.get("/nodes")
-@app.get("/api/nodes")
+@api.get("/nodes")
 def nodes(_: dict = Depends(verify_token)):
     return proxy_request(DISCOVERY_SERVICE, "/nodes")
 
 
-@app.post("/register")
-@app.post("/api/register")
+@api.post("/register")
 async def register_node(request: Request, _: None = Depends(verify_enrollment)):
     data = await json_object(request)
     return await run_in_threadpool(
@@ -240,28 +232,24 @@ async def register_node(request: Request, _: None = Depends(verify_enrollment)):
     )
 
 
-@app.get("/agent/tasks")
-@app.get("/api/agent/tasks")
+@api.get("/agent/tasks")
 def agent_tasks(node_id: int, agent: dict = Depends(verify_agent)):
     if node_id != agent["node_id"]:
-        raise HTTPException(403, "Cannot access another node")
+        raise HTTPException(403, "Нет доступа к заданиям другого сервера.")
     return proxy_request(TOKEN_SERVICE, f"/agent/tasks?node_id={node_id}")
 
 
-@app.put("/agent/tasks/{task_id}/result")
-@app.put("/api/agent/tasks/{task_id}/result")
+@api.put("/agent/tasks/{task_id}/result")
 def agent_task_result(task_id: int, data: dict, agent: dict = Depends(verify_agent)):
     if data.get("node_id") != agent["node_id"]:
-        raise HTTPException(403, "Cannot report results for another node")
+        raise HTTPException(403, "Нельзя передавать результаты для другого сервера.")
     return proxy_request(
         TOKEN_SERVICE, f"/agent/tasks/{task_id}/result", "PUT", data=data
     )
 
 
-@app.post("/agent/event")
-@app.post("/api/agent/event")
-@app.post("/event")
-@app.post("/api/event")
+@api.post("/agent/event")
+@api.post("/event")
 def agent_event(data: dict, agent: dict = Depends(verify_agent)):
     # Neither the node nor hostname is trusted from an agent's event payload.
     payload = {
@@ -272,8 +260,7 @@ def agent_event(data: dict, agent: dict = Depends(verify_agent)):
     return proxy_request(EVENT_SERVICE, "/event", "POST", data=payload)
 
 
-@app.post("/admins")
-@app.post("/api/admins")
+@api.post("/admins")
 def create_admin(data: dict = Body(default=None), _: dict = Depends(verify_token)):
     payload = {
         key: value
@@ -284,14 +271,12 @@ def create_admin(data: dict = Body(default=None), _: dict = Depends(verify_token
     return proxy_request(AUTH_SERVICE, "/admins", "POST", data=payload)
 
 
-@app.post("/scan")
-@app.post("/api/scan")
+@api.post("/scan")
 def scan(data: dict, _: dict = Depends(verify_token)):
     return proxy_request(DISCOVERY_SERVICE, "/scan", "POST", data=data, timeout=20)
 
 
-@app.put("/password")
-@app.put("/api/password")
+@api.put("/password")
 def change_password(data: dict, user: dict = Depends(verify_token)):
     payload = {
         "_admin_id": user["sub"],
@@ -301,16 +286,17 @@ def change_password(data: dict, user: dict = Depends(verify_token)):
     return proxy_request(AUTH_SERVICE, "/password", "PUT", data=payload)
 
 
-@app.get("/generation-status")
-@app.get("/api/generation-status")
+@api.get("/generation-status")
 def generation_status(_: dict = Depends(verify_token)):
     return proxy_request(TOKEN_SERVICE, "/generation-status")
 
 
-@app.post("/tokens/{token_id}/retry")
-@app.post("/api/tokens/{token_id}/retry")
+@api.post("/tokens/{token_id}/retry")
 def retry(token_id: str, _: dict = Depends(verify_token)):
     return proxy_request(TOKEN_SERVICE, f"/tokens/{token_id}/retry", "POST", data={})
+
+
+app.include_router(api)
 
 
 @app.websocket("/ws/events")
@@ -345,17 +331,17 @@ async def websocket_proxy(websocket: WebSocket):
             try:
                 done, _ = await asyncio.wait(
                     tasks,
-                    timeout=max(0, claims["exp"] - time.time()),
+                    timeout=max(0, float(claims["exp"]) - time.time()),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 for task in done:
                     task.result()
                 if not done:
-                    await websocket.close(code=1008, reason="Session expired")
+                    await websocket.close(code=1008, reason="Сессия истекла")
             finally:
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
     except (OSError, websockets.WebSocketException, WebSocketDisconnect, RuntimeError):
         with suppress(RuntimeError, WebSocketDisconnect):
-            await websocket.close(code=1011, reason="Notification service unavailable")
+            await websocket.close(code=1011, reason="Сервис уведомлений недоступен")

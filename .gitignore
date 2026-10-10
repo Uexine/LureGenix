@@ -1,8 +1,6 @@
 .venv/
 __pycache__/
 *.pyc
-.pytest_cache/
-test-results/
 .env
 backups/
 backup.sql
@@ -10,5 +8,4 @@ backup.sql
 agent-install.env
 agent-*.env
 .ruff_cache/
-/tmp????????/
 certs/

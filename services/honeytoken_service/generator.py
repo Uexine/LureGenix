@@ -134,11 +134,13 @@ def generate_file(token_type, mode=None):
     if token_type == "password":
         return ("backup_admin:" + secrets.token_urlsafe(18) + "\n").encode(), "local"
 
-    source = mode
     content = (
         template_content(token_type) if mode == "template" else llm_content(token_type)
     )
-    return encode_content(token_type, content), source
+    payload = encode_content(token_type, content)
+    if len(payload) > 1_000_000:
+        raise GenerationError("Размер файла превышает ограничение агента (1 МБ).")
+    return payload, mode
 
 
 def encode_content(token_type, content):

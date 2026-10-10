@@ -35,7 +35,7 @@ docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
 
 HTTPS: `https://SERVER_IP:8443`. HTTP остается на loopback при
 `BIND_ADDRESS=127.0.0.1`. Для собственной CA у агента задается `AGENT_CA_FILE`;
-в `tools/configure_agent.py` и `tools/smoke_test.py` предусмотрен `--ca-file`.
+в `tools/configure_agent.py` предусмотрен `--ca-file`.
 
 Резервная копия БД, выполняется из корня проекта в Bash:
 

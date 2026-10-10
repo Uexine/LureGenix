@@ -3,16 +3,12 @@
 .env.*
 .venv
 .ruff_cache
-.pytest_cache
-tmp*/
 **/__pycache__
 **/*.pyc
 backups
 backup.sql
 db
 certs
-test-results
-tests
 frontend
 agent
 tools

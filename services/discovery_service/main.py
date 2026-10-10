@@ -10,21 +10,15 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException
+from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
+from common.api import create_app
 from common.database import connect as get_db
 from common.database import utc_timestamp
 
-app = FastAPI(docs_url=None, redoc_url=None)
+app = create_app(database=lambda: get_db())
 scan_lock = threading.Lock()
-
-
-@app.get("/health")
-def health():
-    with closing(get_db()) as conn, conn.cursor() as cur:
-        cur.execute("SELECT 1")
-    return {"status": "ok"}
 
 
 @app.get("/nodes")
@@ -60,7 +54,7 @@ def register(data: Registration):
         identity = str(UUID(data.agent_id))
         address = str(ipaddress.ip_address(data.ip))
     except ValueError:
-        raise HTTPException(400, "Invalid agent identity or IP address")
+        raise HTTPException(400, "Некорректный идентификатор агента или IP-адрес.")
     digest = hashlib.sha256(data.credential.encode()).hexdigest()
     with closing(get_db()) as conn, conn, conn.cursor() as cur:
         # Serialise enrollment to prevent simultaneous re-enrollment taking over a node.
@@ -73,7 +67,7 @@ def register(data: Registration):
         if row:
             if not row[1] or not secrets.compare_digest(row[1], digest):
                 raise HTTPException(
-                    403, "Agent identity already enrolled with another credential"
+                    403, "Агент с этим идентификатором зарегистрирован с другим ключом."
                 )
             node_id = row[0]
             cur.execute(
@@ -88,7 +82,7 @@ def register(data: Registration):
             old = cur.fetchone()
             if old and old[1]:
                 raise HTTPException(
-                    409, "A different agent is already enrolled on this host"
+                    409, "На этом сервере уже зарегистрирован другой агент."
                 )
             if old:
                 node_id = old[0]
@@ -130,7 +124,7 @@ def authenticate(data: Credential):
             row[2], hashlib.sha256(data.credential.encode()).hexdigest()
         )
     ):
-        raise HTTPException(401, "Invalid agent credential")
+        raise HTTPException(401, "Неверный ключ агента.")
     return {"node_id": row[0], "hostname": row[1]}
 
 
@@ -147,7 +141,7 @@ def scan_network(value):
             if s.strip()
         ]
     except ValueError:
-        raise HTTPException(400, "Specify a valid network CIDR")
+        raise HTTPException(400, "Укажите корректную подсеть в формате CIDR.")
     if (
         subnet.version != 4
         or subnet.num_addresses > 256
@@ -155,12 +149,12 @@ def scan_network(value):
         or subnet.is_multicast
     ):
         raise HTTPException(
-            400, "Discovery supports IPv4 networks of at most 256 addresses"
+            400, "Поддерживаются только подсети IPv4 размером не более 256 адресов."
         )
     if not any(subnet.subnet_of(net) for net in allowed if net.version == 4):
-        raise HTTPException(403, "Network is outside DISCOVERY_ALLOWED_CIDRS")
+        raise HTTPException(403, "Подсеть не входит в список DISCOVERY_ALLOWED_CIDRS.")
     if not scan_lock.acquire(blocking=False):
-        raise HTTPException(429, "A discovery scan is already running")
+        raise HTTPException(429, "Сканирование уже выполняется. Дождитесь завершения.")
     try:
 
         def probe(address):

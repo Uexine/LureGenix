@@ -7,10 +7,11 @@ from contextlib import asynccontextmanager, closing
 from typing import Literal
 
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import HTTPException
 from generator import TOKEN_TYPES, GenerationError, generate_file
 from pydantic import BaseModel, ConfigDict, Field
 
+from common.api import create_app
 from common.database import connect as get_db
 from common.database import utc_timestamp
 
@@ -22,14 +23,7 @@ async def lifespan(app):
     yield
 
 
-app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
-
-
-@app.get("/health")
-def health():
-    with closing(get_db()) as conn, conn.cursor() as cur:
-        cur.execute("SELECT 1")
-    return {"status": "ok"}
+app = create_app(lifespan=lifespan, database=lambda: get_db())
 
 
 @app.get("/generation-status")
@@ -83,7 +77,7 @@ def validate_target(path):
         or any(ord(c) < 32 for c in path)
     ):
         raise HTTPException(
-            status_code=400, detail="Specify an absolute Linux path without '..'"
+            status_code=400, detail="Укажите абсолютный путь Linux без '..'."
         )
     return posixpath.normpath(path) if path else ""
 
@@ -98,7 +92,7 @@ def validate_filename(filename):
     ):
         raise HTTPException(
             status_code=400,
-            detail="Filename must contain only a filename, without directories",
+            detail="Укажите только имя файла, без каталогов.",
         )
     return filename
 
@@ -117,11 +111,11 @@ def generate(data: GenerateRequest):
         data.type.lower(), data.type.lower()
     )
     if token_type not in TOKEN_TYPES:
-        raise HTTPException(status_code=400, detail="Unsupported honeytoken type")
+        raise HTTPException(status_code=400, detail="Неподдерживаемый тип приманки.")
     target = validate_target(data.node_path.strip())
     if data.target_kind == "file" and not target:
         raise HTTPException(
-            status_code=400, detail="A full file path is required for target_kind=file"
+            status_code=400, detail="Для размещения файлом укажите полный путь к файлу."
         )
     token_id = str(uuid.uuid4())
     default_name = TOKEN_TYPES[token_type][1]
@@ -139,10 +133,12 @@ def generate(data: GenerateRequest):
         if not node:
             raise HTTPException(
                 status_code=404,
-                detail="Node not found; install and register a Linux agent first",
+                detail="Сервер не найден. Сначала установите и зарегистрируйте Linux-агент.",
             )
         if not node[1]:
-            raise HTTPException(409, "This legacy node has no enrolled Linux agent")
+            raise HTTPException(
+                409, "Для этой старой ноды не зарегистрирован Linux-агент."
+            )
     try:
         payload, source = generate_file(token_type, mode=data.generation_mode)
     except GenerationError as exc:
@@ -260,14 +256,16 @@ def retry(token_id: uuid.UUID):
             (str(token_id),),
         )
         if not cur.fetchone():
-            raise HTTPException(409, "Only a failed deployment can be retried")
+            raise HTTPException(409, "Повторить можно только неудачное размещение.")
     return {"status": "ok"}
 
 
 @app.put("/agent/tasks/{task_id}/result")
 def report_result(task_id: int, data: DeploymentResult):
     if data.status == "deployed" and not data.deployed_path:
-        raise HTTPException(status_code=400, detail="deployed_path required")
+        raise HTTPException(
+            status_code=400, detail="Не указан путь размещённого файла."
+        )
     path = validate_target(data.deployed_path)
     with closing(get_db()) as conn, conn, conn.cursor() as cur:
         cur.execute(
@@ -276,19 +274,23 @@ def report_result(task_id: int, data: DeploymentResult):
         )
         row = cur.fetchone()
         if not row:
-            raise HTTPException(status_code=404, detail="Task not found for this node")
+            raise HTTPException(
+                status_code=404, detail="Задание для этого сервера не найдено."
+            )
         if data.attempt != row[7]:
-            raise HTTPException(409, "Stale deployment attempt")
+            raise HTTPException(
+                409, "Результат относится к устаревшей попытке размещения."
+            )
         if row[1] == "deployed" and (data.status != "deployed" or path != row[2]):
             raise HTTPException(
-                status_code=409, detail="A deployed task cannot be changed"
+                status_code=409, detail="Завершённое размещение нельзя изменить."
             )
         if row[1] == "deployed":
             return {"status": "ok", "deployment_status": "deployed", "path": path}
         expected_path = row[4] if row[6] == "file" else posixpath.join(row[4], row[5])
         if data.status == "deployed" and row[4] and path != expected_path:
             raise HTTPException(
-                400, "Deployed path does not match the requested target"
+                400, "Путь размещённого файла не совпадает с выбранным."
             )
         cur.execute(
             """UPDATE honeytoken_deployments SET status = %s, deployed_path = %s, error = %s,
@@ -301,13 +303,7 @@ def report_result(task_id: int, data: DeploymentResult):
                 "UPDATE honeytoken_files SET file_path = %s WHERE id = %s",
                 (path, row[0]),
             )
-        intended_path = (
-            row[4]
-            if row[6] == "file"
-            else posixpath.join(row[4], row[5])
-            if row[4]
-            else "auto"
-        )
+        intended_path = expected_path if row[4] else "auto"
         placement = f"node:{data.node_id}, path:{path or intended_path}, name:{row[3]}, status:{data.status}"
         cur.execute(
             "UPDATE honeytoken_files SET placement = %s WHERE id = %s",

@@ -6,8 +6,9 @@ from datetime import datetime, timedelta, timezone
 import bcrypt
 import jwt
 import psycopg2
-from fastapi import FastAPI, HTTPException
+from fastapi import HTTPException
 
+from common.api import create_app
 from common.database import connect as get_db
 
 
@@ -17,15 +18,8 @@ async def lifespan(app):
     yield
 
 
-app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+app = create_app(lifespan=lifespan, database=lambda: get_db())
 SECRET = os.getenv("JWT_SECRET", "")
-
-
-@app.get("/health")
-def health():
-    with closing(get_db()) as conn, conn.cursor() as cur:
-        cur.execute("SELECT 1")
-    return {"status": "ok"}
 
 
 def hash_password(password):
@@ -36,7 +30,7 @@ def hash_password(password):
     ):
         raise HTTPException(
             400,
-            "Password must contain at least 12 characters and at most 72 UTF-8 bytes",
+            "Пароль должен содержать не менее 12 символов и не более 72 байт UTF-8.",
         )
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode(
         "ascii"
@@ -45,7 +39,9 @@ def hash_password(password):
 
 def bootstrap():
     if len(SECRET) < 32 or SECRET == "your_super_secret_key_here_min_32_chars":
-        raise RuntimeError("Set a private JWT_SECRET in .env")
+        raise RuntimeError(
+            "Задайте секрет JWT_SECRET длиной не менее 32 символов в .env."
+        )
     password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
     if not password:
         return
@@ -69,7 +65,7 @@ def login(data: dict):
         or not password
         or len(password.encode("utf-8")) > 72
     ):
-        raise HTTPException(401, "Invalid username or password")
+        raise HTTPException(401, "Неверный логин или пароль.")
     with closing(get_db()) as conn, conn, conn.cursor() as cur:
         cur.execute(
             "SELECT id, username, password_hash, is_active FROM admins WHERE LOWER(username) = %s",
@@ -83,7 +79,7 @@ def login(data: dict):
             except (ValueError, UnicodeError):
                 pass
         if not valid:
-            raise HTTPException(401, "Invalid username or password")
+            raise HTTPException(401, "Неверный логин или пароль.")
         cur.execute("UPDATE admins SET last_login=now() WHERE id=%s", (row[0],))
     token = jwt.encode(
         {
@@ -104,12 +100,12 @@ def create_admin(data: dict):
     if (
         not secret
         or not isinstance(provided, str)
-        or not secrets.compare_digest(secret, provided)
+        or not secrets.compare_digest(secret.encode(), provided.encode())
     ):
-        raise HTTPException(403, "Forbidden")
+        raise HTTPException(403, "Недостаточно прав для выполнения действия.")
     username = str(data.get("username") or "").strip().lower()
     if not username or len(username) > 100:
-        raise HTTPException(400, "Invalid username")
+        raise HTTPException(400, "Укажите логин длиной от 1 до 100 символов.")
     password_hash = hash_password(data.get("password"))
     try:
         with closing(get_db()) as conn, conn, conn.cursor() as cur:
@@ -118,7 +114,7 @@ def create_admin(data: dict):
                 (username, password_hash),
             )
     except psycopg2.IntegrityError:
-        raise HTTPException(409, "Username already exists")
+        raise HTTPException(409, "Пользователь с таким логином уже существует.")
     return {"status": "ok", "username": username}
 
 
@@ -126,7 +122,7 @@ def create_admin(data: dict):
 def change_password(data: dict):
     current = data.get("current_password")
     if not isinstance(current, str) or not current or len(current.encode("utf-8")) > 72:
-        raise HTTPException(400, "Current password required")
+        raise HTTPException(400, "Введите текущий пароль.")
     new_hash = hash_password(data.get("new_password"))
     with closing(get_db()) as conn, conn, conn.cursor() as cur:
         cur.execute(
@@ -141,7 +137,7 @@ def change_password(data: dict):
             except (ValueError, UnicodeError):
                 pass
         if not valid:
-            raise HTTPException(403, "Current password is incorrect")
+            raise HTTPException(403, "Текущий пароль неверен.")
         cur.execute(
             "UPDATE admins SET password_hash=%s WHERE id=%s",
             (new_hash, data["_admin_id"]),

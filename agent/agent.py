@@ -1,6 +1,7 @@
 """Host-installed Linux agent: deployment tasks, inotify monitoring, durable delivery."""
 
 import base64
+import errno
 import hashlib
 import json
 import logging
@@ -43,7 +44,7 @@ STATE_FILE = Path(
 ).expanduser()
 FILE_MODE = int(os.getenv("AGENT_FILE_MODE", "0644"), 8)
 if FILE_MODE not in (0o600, 0o640, 0o644):
-    raise ValueError("AGENT_FILE_MODE must be 0600, 0640 or 0644")
+    raise ValueError("AGENT_FILE_MODE должен быть 0600, 0640 или 0644.")
 DENIED_PATHS = (
     "/opt/luregenix-agent",
     "/etc/luregenix-agent.env",
@@ -104,11 +105,11 @@ def allowed_path(path):
 def target_file(task):
     filename = task["filename"]
     if filename in ("", ".", "..") or any(c in filename for c in "/\\\x00\r\n"):
-        raise ValueError("Invalid filename")
+        raise ValueError("Некорректное имя файла.")
     target = task.get("target_path", "")
     if target:
         if not os.path.isabs(target) or ".." in Path(target).parts:
-            raise ValueError("Target must be an absolute path without '..'")
+            raise ValueError("Укажите абсолютный путь без '..'.")
         path = (
             target
             if task.get("target_kind") == "file"
@@ -126,12 +127,12 @@ def target_file(task):
             None,
         )
         if not directory:
-            raise ValueError("No existing writable directory in AGENT_AUTO_DIRS")
+            raise ValueError("Нет доступного для записи каталога в AGENT_AUTO_DIRS.")
         path = os.path.join(directory, filename)
     if not allowed_path(path):
-        raise ValueError("Target is outside AGENT_ALLOWED_DIRS")
+        raise ValueError("Каталог не входит в список AGENT_ALLOWED_DIRS.")
     if not os.path.isdir(os.path.dirname(path)):
-        raise ValueError("Target directory does not exist")
+        raise ValueError("Каталог размещения не существует.")
     return os.path.abspath(path)
 
 
@@ -204,6 +205,26 @@ def discover_ip():
             except OSError:
                 pass
         return address
+
+
+def deployment_error(exc):
+    if isinstance(exc, FileExistsError):
+        return "Файл уже существует. Выберите другое имя файла."
+    if isinstance(exc, OSError):
+        return {
+            errno.EACCES: "Недостаточно прав для доступа к файлу или каталогу.",
+            errno.EPERM: "Операция с файлом запрещена.",
+            errno.ENOENT: "Файл или каталог не найден.",
+            errno.ENOTDIR: "Путь содержит файл вместо каталога или символьную ссылку.",
+            errno.ELOOP: "Символьные ссылки в пути размещения запрещены.",
+            errno.ENOSPC: "На сервере закончилось свободное место.",
+            errno.EROFS: "Файловая система доступна только для чтения.",
+            errno.ENOTSUP: "Файловая система не поддерживает метки владельца приманки.",
+        }.get(exc.errno, "Не удалось записать файл. Проверьте журнал агента.")
+    message = str(exc)
+    if message and "А" <= message[0] <= "я":
+        return message[:1000]
+    return "Не удалось разместить файл. Проверьте журнал агента."
 
 
 class Agent:
@@ -326,7 +347,7 @@ class Agent:
                 )
                 continue
             if result.get("status") != "ok":
-                raise RuntimeError("Event was not saved")
+                raise RuntimeError("Событие не сохранено сервером.")
             self.state["events"].pop(0)
             self.persist()
 
@@ -334,7 +355,7 @@ class Agent:
         from inotify_simple import flags
 
         if not allowed_path(path):
-            raise ValueError("Monitor path is outside AGENT_ALLOWED_DIRS")
+            raise ValueError("Путь мониторинга не входит в список AGENT_ALLOWED_DIRS.")
         parent = os.path.dirname(path)
         for descriptor, entry in self.watches.items():
             if entry["parent"] == parent:
@@ -375,9 +396,11 @@ class Agent:
         try:
             payload = base64.b64decode(task["content_base64"], validate=True)
             if len(payload) > 1_000_000:
-                raise ValueError("File payload exceeds the agent size limit")
+                raise ValueError("Размер файла превышает ограничение агента (1 МБ).")
             if hashlib.sha256(payload).hexdigest() != task["sha256"]:
-                raise ValueError("File payload checksum mismatch")
+                raise ValueError(
+                    "Контрольная сумма файла не совпадает. Размещение отменено."
+                )
             path = record["path"] if record else target_file(task)
             if record is None:
                 record = {
@@ -390,7 +413,7 @@ class Agent:
             if os.path.lexists(path):
                 if not owned_file(path, task["token_id"]):
                     raise FileExistsError(
-                        "File already exists; choose a different filename"
+                        "Файл уже существует. Выберите другое имя файла."
                     )
                 # Recovery after a crash between write and acknowledgement. Verify before watching.
                 with os.fdopen(
@@ -398,7 +421,7 @@ class Agent:
                 ) as stream:
                     if hashlib.sha256(stream.read()).hexdigest() != task["sha256"]:
                         raise ValueError(
-                            "Previously deployed file has changed; refusing to overwrite"
+                            "Ранее размещённый файл изменён. Перезапись запрещена."
                         )
             else:
                 write_file(path, payload, task["token_id"])
@@ -406,11 +429,12 @@ class Agent:
             self.watch(task["token_id"], path)
             record.update(status="deployed", error="")
         except Exception as exc:
+            logger.warning("Deployment failed for %s (%s)", key, type(exc).__name__)
             record = {
                 "status": "failed",
                 "path": record["path"] if record else "",
                 "token_id": task["token_id"],
-                "error": str(exc)[:1000],
+                "error": deployment_error(exc),
             }
         self.state["tasks"][key] = record
         record["attempt"] = task.get("attempt", 1)
@@ -459,7 +483,7 @@ class Agent:
             },
         )
         if result.get("status") != "ok":
-            raise RuntimeError("Deployment result was not saved")
+            raise RuntimeError("Результат размещения не сохранён сервером.")
         # A lost HTTP acknowledgement must not cause the file to be written again.
         if not record.get("announced"):
             self.queue_event(
@@ -530,14 +554,14 @@ class Agent:
 
 def main():
     if sys.platform != "linux":
-        raise SystemExit("Run this agent directly on the target Linux server")
+        raise SystemExit("Запускайте агент непосредственно на целевом Linux-сервере.")
     if len(AGENT_SECRET) < 32:
         raise SystemExit(
-            "Set AGENT_SECRET to the private enrollment secret configured on the gateway"
+            "Задайте AGENT_SECRET: секрет регистрации, настроенный на основном сервере."
         )
     if not 1 <= HEARTBEAT_INTERVAL <= 120 or not 1 <= TASK_POLL_INTERVAL <= 60:
         raise SystemExit(
-            "Heartbeat must be 1..120 seconds; task polling must be 1..60 seconds"
+            "Интервал heartbeat должен быть 1..120 секунд, опрос заданий — 1..60 секунд."
         )
     gateway = urlsplit(GATEWAY_URL)
     if (
@@ -545,8 +569,12 @@ def main():
         or not gateway.hostname
         or gateway.username
         or gateway.password
+        or gateway.query
+        or gateway.fragment
     ):
-        raise SystemExit("GATEWAY_URL must be an HTTP(S) address without credentials")
+        raise SystemExit(
+            "GATEWAY_URL должен быть HTTP(S)-адресом без логина, пароля и параметров."
+        )
     import fcntl
 
     from inotify_simple import INotify
