@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LureGenix &#183; Дашборд</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="/vendor/fontawesome/css/all.min.css">
     <link rel="stylesheet" href="/css/style.css">
     <link rel="stylesheet" href="/css/dashboard.css">
 </head>
@@ -12,7 +12,7 @@
     <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <h2>LureGenix</h2>
-            <button class="toggle-sidebar" onclick="toggleSidebar()">
+            <button class="toggle-sidebar" data-action="toggleSidebar" title="Свернуть меню">
                 <i class="fas fa-bars"></i>
             </button>
         </div>
@@ -43,18 +43,20 @@
 
     <main class="main-content" id="mainContent">
         <div class="top-bar">
+            <button type="button" class="toggle-sidebar mobile-menu-toggle" data-action="toggleSidebar" title="Открыть меню" aria-label="Открыть меню" aria-controls="sidebar"><i class="fas fa-bars"></i></button>
             <div class="page-title">
                 <h1 id="pageTitle">Дашборд безопасности</h1>
                 <p id="pageSubtitle">Отслеживайте активность honeytoken&#39;ов в реальном времени</p>
             </div>
             <div class="user-menu">
-                <div class="user-profile" onclick="logout()" title="Выйти из аккаунта">
+                <button class="btn btn-outline" data-action="passwordDialog" title="Сменить пароль"><i class="fas fa-key"></i></button>
+                <div class="user-profile" data-action="logout" title="Выйти из аккаунта" role="button" tabindex="0">
                     <div class="avatar" id="userAvatar">A</div>
                     <div class="user-info">
                         <div class="name" id="userName">Admin</div>
                         <div class="role">SOC Analyst</div>
                     </div>
-                    <span style="color: var(--text-secondary); margin-left: 8px; font-size: 0.85rem;">Выйти</span>
+                    <span class="logout-label" style="color: var(--text-secondary); margin-left: 8px; font-size: 0.85rem;">Выйти</span>
                     <i class="fas fa-sign-out-alt" style="color: var(--text-secondary); margin-left: 4px;"></i>
                 </div>
             </div>
@@ -103,6 +105,7 @@
 
             <div class="section-header">
                 <h2>Создать honeytoken</h2>
+                <output id="generatorStatus" aria-live="polite">Генератор: проверка</output>
             </div>
             <div class="create-token-form">
                 <div class="form-group">
@@ -137,7 +140,7 @@
                     <input type="text" id="tokenFilename" placeholder="database_backup.sql">
                 </div>
                 <div class="form-group form-group-action">
-                    <button class="btn btn-primary btn-generate" id="btnGenerate" onclick="generateToken()">
+                    <button class="btn btn-primary btn-generate" id="btnGenerate" data-action="generateToken">
                         <i class="fas fa-plus"></i> Создать и разместить
                     </button>
                 </div>
@@ -159,10 +162,17 @@
         <div class="section-content hidden" id="section-nodes">
             <div class="section-header">
                 <h2>Активные ноды</h2>
-                <button class="btn btn-outline" onclick="loadNodes(true)">
+                <button class="btn btn-outline" data-action="loadNodes">
                     <i class="fas fa-sync-alt"></i> Обновить
                 </button>
             </div>
+            <div class="discovery-controls">
+                <label for="scanSubnet">Сеть CIDR</label>
+                <input id="scanSubnet" type="text" placeholder="10.124.21.0/24" maxlength="64">
+                <button class="btn btn-outline" data-action="scanNetwork" id="btnScan" title="Обнаружить серверы SSH"><i class="fas fa-search"></i></button>
+                <output id="scanStatus" aria-live="polite"></output>
+            </div>
+            <div id="scanResults"></div>
             <div class="table-container">
                 <table>
                     <thead>
@@ -183,13 +193,13 @@
         <div class="section-content hidden" id="section-tokens">
             <div class="section-header">
                 <h2>Список honeytoken&#39;ов</h2>
-                <button class="btn btn-outline" onclick="loadTokens(true)">
+                <button class="btn btn-outline" data-action="loadTokens">
                     <i class="fas fa-sync-alt"></i> Обновить
                 </button>
             </div>
             <div class="tokens-filters">
-                <input type="text" id="tokensFilterSearch" placeholder="Поиск по размещению или пути..." class="filter-input" oninput="applyTokensFilter()">
-                <select id="tokensFilterType" class="filter-select" onchange="applyTokensFilter()">
+                <input type="text" id="tokensFilterSearch" placeholder="Поиск по размещению или пути..." class="filter-input">
+                <select id="tokensFilterType" class="filter-select">
                     <option value="">Все типы</option>
                 </select>
             </div>
@@ -214,10 +224,10 @@
             <div class="section-header">
                 <h2>Все события</h2>
                 <div style="display:flex;gap:8px;align-items:center;">
-                    <button class="btn btn-outline" onclick="markAllEventsRead()" title="Отметить все прочитанными">
+                    <button class="btn btn-outline" data-action="markAllEventsRead" title="Отметить все прочитанными">
                         <i class="fas fa-check-double"></i> Прочитано
                     </button>
-                    <button class="btn btn-outline" onclick="loadEvents(true)">
+                    <button class="btn btn-outline" data-action="loadEvents">
                         <i class="fas fa-sync-alt"></i> Обновить
                     </button>
                 </div>
@@ -229,7 +239,7 @@
         <div class="section-content hidden" id="section-map">
             <div class="section-header">
                 <h2>Карта сети</h2>
-                <button class="btn btn-outline" onclick="loadNetworkMap()">
+                <button class="btn btn-outline" data-action="loadNetworkMap">
                     <i class="fas fa-sync-alt"></i> Обновить
                 </button>
             </div>
@@ -240,5 +250,20 @@
 
     <script src="/js/api.js"></script>
     <script src="/js/dashboard.js"></script>
+    <dialog id="passwordDialog">
+        <form id="passwordForm">
+            <h2>Смена пароля</h2>
+            <label for="currentPassword">Текущий пароль</label>
+            <input id="currentPassword" type="password" autocomplete="current-password" required>
+            <label for="newPassword">Новый пароль</label>
+            <input id="newPassword" type="password" autocomplete="new-password" minlength="12" required>
+            <label for="confirmPassword">Подтверждение</label>
+            <input id="confirmPassword" type="password" autocomplete="new-password" minlength="12" required>
+            <div class="password-actions">
+                <button type="button" class="btn btn-outline" data-action="closePasswordDialog">Отмена</button>
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+            </div>
+        </form>
+    </dialog>
 </body>
 </html>

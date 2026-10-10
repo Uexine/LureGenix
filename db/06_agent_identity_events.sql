@@ -1,0 +1,7 @@
+ALTER TABLE nodes ADD COLUMN IF NOT EXISTS agent_id TEXT;
+ALTER TABLE nodes ADD COLUMN IF NOT EXISTS credential_hash TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_agent_id ON nodes(agent_id) WHERE agent_id IS NOT NULL;
+ALTER TABLE event_log ADD COLUMN IF NOT EXISTS event_id TEXT;
+ALTER TABLE event_log ADD COLUMN IF NOT EXISTS node_id INTEGER REFERENCES nodes(id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_event_log_event_id ON event_log(event_id) WHERE event_id IS NOT NULL;
+ALTER TABLE honeytoken_deployments ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 1;

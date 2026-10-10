@@ -15,7 +15,17 @@ Restart=on-failure
 RestartSec=10
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=false
+ProtectSystem=strict
+ReadWritePaths=/etc /home /opt /var/lib/luregenix-agent -/var/www
+ReadOnlyPaths=/opt/luregenix-agent /etc/luregenix-agent.env
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+PrivateDevices=true
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER
 
 [Install]
 WantedBy=multi-user.target

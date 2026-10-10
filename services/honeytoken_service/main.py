@@ -3,65 +3,64 @@ import hashlib
 import os
 import posixpath
 import uuid
-from contextlib import closing
+from contextlib import asynccontextmanager, closing
 from typing import Literal
 
-import psycopg2
+import requests
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from generator import TOKEN_TYPES, GenerationError, generate_file
+from pydantic import BaseModel, ConfigDict, Field
 
-from generator import GenerationError, TOKEN_TYPES, generate_file
-
-app = FastAPI()
-
-DEPLOYMENT_SCHEMA = """
-CREATE TABLE IF NOT EXISTS honeytoken_deployments (
-    id SERIAL PRIMARY KEY,
-    honeytoken_file_id INTEGER UNIQUE NOT NULL REFERENCES honeytoken_files(id) ON DELETE CASCADE,
-    node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-    token_id TEXT UNIQUE NOT NULL,
-    filename TEXT NOT NULL,
-    display_name TEXT NOT NULL DEFAULT '',
-    target_path TEXT NOT NULL DEFAULT '',
-    target_kind TEXT NOT NULL DEFAULT 'directory' CHECK (target_kind IN ('directory', 'file')),
-    content_base64 TEXT NOT NULL,
-    sha256 TEXT NOT NULL,
-    generation_source TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'deployed', 'failed')),
-    deployed_path TEXT,
-    error TEXT,
-    created_at TIMESTAMP DEFAULT now(),
-    completed_at TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_honeytoken_deployments_node_status
-    ON honeytoken_deployments(node_id, status);
-"""
+from common.database import connect as get_db
+from common.database import utc_timestamp
 
 
-def get_db():
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST", "postgres"),
-        database=os.getenv("DB_NAME", "luregenix"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-    )
+@asynccontextmanager
+async def lifespan(app):
+    with closing(get_db()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT attempt FROM honeytoken_deployments LIMIT 0")
+    yield
 
 
-@app.on_event("startup")
-def ensure_schema():
-    with closing(get_db()) as conn, conn, conn.cursor() as cur:
-        cur.execute(DEPLOYMENT_SCHEMA)
+app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+
+
+@app.get("/health")
+def health():
+    with closing(get_db()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1")
+    return {"status": "ok"}
+
+
+@app.get("/generation-status")
+def generation_status():
+    mode = os.getenv("GENERATION_MODE", "template")
+    model = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
+    ready = mode == "template"
+    if mode == "llm":
+        try:
+            result = requests.get(
+                os.getenv("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
+                + "/api/tags",
+                timeout=3,
+            )
+            result.raise_for_status()
+            ready = model in {
+                item.get("name") for item in result.json().get("models", [])
+            }
+        except (requests.RequestException, ValueError, AttributeError):
+            ready = False
+    return {"mode": mode, "model": model, "ready": ready}
 
 
 class GenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     node_id: int = Field(gt=0)
     type: str = "txt"
     name: str = Field(default="", max_length=200)
     filename: str = Field(default="", max_length=255)
     node_path: str = Field(default="", max_length=4096)
     target_kind: Literal["directory", "file"] = "directory"
-    save_path: str = Field(default="", max_length=4096)
 
 
 class DeploymentResult(BaseModel):
@@ -69,45 +68,89 @@ class DeploymentResult(BaseModel):
     status: Literal["deployed", "failed"]
     deployed_path: str = Field(default="", max_length=4096)
     error: str = Field(default="", max_length=1000)
+    attempt: int = Field(default=1, ge=1)
 
 
 def validate_target(path):
-    if path and (not path.startswith("/") or path.startswith("//") or ".." in path.split("/") or "\x00" in path):
-        raise HTTPException(status_code=400, detail="Specify an absolute Linux path without '..'")
+    if path and (
+        not path.startswith("/")
+        or path.startswith("//")
+        or ".." in path.split("/")
+        or any(ord(c) < 32 for c in path)
+    ):
+        raise HTTPException(
+            status_code=400, detail="Specify an absolute Linux path without '..'"
+        )
     return posixpath.normpath(path) if path else ""
 
 
 def validate_filename(filename):
-    if not filename or filename in (".", "..") or any(c in filename for c in "/\\\x00\r\n"):
-        raise HTTPException(status_code=400, detail="Filename must contain only a filename, without directories")
+    if (
+        not filename
+        or filename in (".", "..")
+        or len(filename.encode("utf-8")) > 255
+        or any(c in filename for c in "/\\")
+        or any(ord(c) < 32 for c in filename)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Filename must contain only a filename, without directories",
+        )
     return filename
 
 
 @app.get("/token-types")
 def token_types():
-    return [{"id": index, "name": key, "description": value[0]} for index, (key, value) in enumerate(TOKEN_TYPES.items(), 1)]
+    return [
+        {"id": index, "name": key, "description": value[0]}
+        for index, (key, value) in enumerate(TOKEN_TYPES.items(), 1)
+    ]
 
 
 @app.post("/generate")
 def generate(data: GenerateRequest):
-    token_type = {"env": "env_file", "sql": "db_dump"}.get(data.type.lower(), data.type.lower())
+    token_type = {"env": "env_file", "sql": "db_dump"}.get(
+        data.type.lower(), data.type.lower()
+    )
     if token_type not in TOKEN_TYPES:
         raise HTTPException(status_code=400, detail="Unsupported honeytoken type")
-    target = validate_target(data.node_path.strip() or data.save_path.strip())
+    target = validate_target(data.node_path.strip())
     if data.target_kind == "file" and not target:
-        raise HTTPException(status_code=400, detail="A full file path is required for target_kind=file")
-    filename = validate_filename(data.filename.strip() or TOKEN_TYPES[token_type][1])
+        raise HTTPException(
+            status_code=400, detail="A full file path is required for target_kind=file"
+        )
+    token_id = str(uuid.uuid4())
+    default_name = TOKEN_TYPES[token_type][1]
+    stem, extension = posixpath.splitext(default_name)
+    if default_name.endswith(".tar.gz"):
+        stem, extension = default_name[:-7], ".tar.gz"
+    filename = validate_filename(
+        data.filename.strip() or f"{stem}_{token_id[:8]}{extension}"
+    )
     with closing(get_db()) as conn, conn.cursor() as cur:
-        cur.execute("SELECT id FROM nodes WHERE id = %s", (data.node_id,))
-        if not cur.fetchone():
-            raise HTTPException(status_code=404, detail="Node not found; install and register a Linux agent first")
+        cur.execute(
+            "SELECT id, credential_hash FROM nodes WHERE id = %s", (data.node_id,)
+        )
+        node = cur.fetchone()
+        if not node:
+            raise HTTPException(
+                status_code=404,
+                detail="Node not found; install and register a Linux agent first",
+            )
+        if not node[1]:
+            raise HTTPException(409, "This legacy node has no enrolled Linux agent")
     try:
         payload, source = generate_file(token_type)
     except GenerationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    token_id = str(uuid.uuid4())
-    intended_path = target if data.target_kind == "file" else posixpath.join(target, filename) if target else ""
+    intended_path = (
+        target
+        if data.target_kind == "file"
+        else posixpath.join(target, filename)
+        if target
+        else ""
+    )
     placement = f"node:{data.node_id}, path:{intended_path or 'auto'}, name:{data.name}, status:pending"
     with closing(get_db()) as conn, conn, conn.cursor() as cur:
         cur.execute(
@@ -120,12 +163,29 @@ def generate(data: GenerateRequest):
                (honeytoken_file_id, node_id, token_id, filename, target_path, target_kind,
                 content_base64, sha256, generation_source, display_name)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-            (file_id, data.node_id, token_id, filename, target, data.target_kind,
-             base64.b64encode(payload).decode("ascii"), hashlib.sha256(payload).hexdigest(), source, data.name),
+            (
+                file_id,
+                data.node_id,
+                token_id,
+                filename,
+                target,
+                data.target_kind,
+                base64.b64encode(payload).decode("ascii"),
+                hashlib.sha256(payload).hexdigest(),
+                source,
+                data.name,
+            ),
         )
         task_id = cur.fetchone()[0]
-    return {"token_id": token_id, "deployment_task_id": task_id, "node_id": data.node_id,
-            "type": token_type, "status": "pending", "target_path": target, "generation_source": source}
+    return {
+        "token_id": token_id,
+        "deployment_task_id": task_id,
+        "node_id": data.node_id,
+        "type": token_type,
+        "status": "pending",
+        "target_path": target,
+        "generation_source": source,
+    }
 
 
 @app.get("/tokens")
@@ -133,15 +193,30 @@ def list_tokens():
     with closing(get_db()) as conn, conn.cursor() as cur:
         cur.execute(
             """SELECT hf.id, hf.token_type, hf.file_path, hf.placement, hf.created_at,
-                      d.token_id, d.status, d.deployed_path, d.error, d.node_id, d.generation_source, d.display_name
+                      d.token_id, d.status, d.deployed_path, d.error, d.node_id, d.generation_source, d.display_name,
+                      d.integrity_status, d.last_event_at
                FROM honeytoken_files hf LEFT JOIN honeytoken_deployments d ON d.honeytoken_file_id = hf.id
                ORDER BY hf.id DESC LIMIT 500"""
         )
         rows = cur.fetchall()
-    return [{"id": r[5] or f"legacy-{r[0]}", "type": r[1], "path": r[2], "placement": r[3] or "",
-             "created_at": r[4].isoformat() if r[4] else None, "deployment_status": r[6] or "legacy",
-             "deployed_path": r[7] or "", "deployment_error": r[8] or "", "node_id": r[9],
-             "generation_source": r[10] or "", "name": r[11] or ""} for r in rows]
+    return [
+        {
+            "id": r[5] or f"legacy-{r[0]}",
+            "type": r[1],
+            "path": r[2],
+            "placement": r[3] or "",
+            "created_at": utc_timestamp(r[4]),
+            "deployment_status": r[6] or "legacy",
+            "deployed_path": r[7] or "",
+            "deployment_error": r[8] or "",
+            "node_id": r[9],
+            "generation_source": r[10] or "",
+            "name": r[11] or "",
+            "integrity_status": r[12] or "unknown",
+            "last_event_at": utc_timestamp(r[13]),
+        }
+        for r in rows
+    ]
 
 
 @app.get("/agent/tasks")
@@ -149,15 +224,40 @@ def agent_tasks(node_id: int):
     with closing(get_db()) as conn, conn.cursor() as cur:
         cur.execute(
             """SELECT d.id, d.token_id, hf.token_type, d.filename, d.target_path,
-                      d.target_kind, d.content_base64, d.sha256, d.status, d.deployed_path
+                      d.target_kind, CASE WHEN d.status='pending' THEN d.content_base64 ELSE '' END, d.sha256, d.status, d.deployed_path, d.attempt
                FROM honeytoken_deployments d JOIN honeytoken_files hf ON hf.id = d.honeytoken_file_id
                WHERE d.node_id = %s AND d.status IN ('pending', 'deployed') ORDER BY d.id""",
             (node_id,),
         )
         rows = cur.fetchall()
-    return [{"id": r[0], "token_id": r[1], "type": r[2], "filename": r[3], "target_path": r[4],
-             "target_kind": r[5], "content_base64": r[6] if r[8] == "pending" else "",
-             "sha256": r[7], "status": r[8], "deployed_path": r[9] or ""} for r in rows]
+    return [
+        {
+            "id": r[0],
+            "token_id": r[1],
+            "type": r[2],
+            "filename": r[3],
+            "target_path": r[4],
+            "target_kind": r[5],
+            "content_base64": r[6] if r[8] == "pending" else "",
+            "sha256": r[7],
+            "status": r[8],
+            "deployed_path": r[9] or "",
+            "attempt": r[10],
+        }
+        for r in rows
+    ]
+
+
+@app.post("/tokens/{token_id}/retry")
+def retry(token_id: uuid.UUID):
+    with closing(get_db()) as conn, conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE honeytoken_deployments SET status='pending',error=NULL,completed_at=NULL,attempt=attempt+1,updated_at=now() WHERE token_id=%s AND status='failed' RETURNING id",
+            (str(token_id),),
+        )
+        if not cur.fetchone():
+            raise HTTPException(409, "Only a failed deployment can be retried")
+    return {"status": "ok"}
 
 
 @app.put("/agent/tasks/{task_id}/result")
@@ -167,22 +267,46 @@ def report_result(task_id: int, data: DeploymentResult):
     path = validate_target(data.deployed_path)
     with closing(get_db()) as conn, conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT honeytoken_file_id, status, deployed_path, display_name, target_path, filename, target_kind FROM honeytoken_deployments WHERE id = %s AND node_id = %s FOR UPDATE",
+            "SELECT honeytoken_file_id, status, deployed_path, display_name, target_path, filename, target_kind, attempt FROM honeytoken_deployments WHERE id = %s AND node_id = %s FOR UPDATE",
             (task_id, data.node_id),
         )
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Task not found for this node")
+        if data.attempt != row[7]:
+            raise HTTPException(409, "Stale deployment attempt")
         if row[1] == "deployed" and (data.status != "deployed" or path != row[2]):
-            raise HTTPException(status_code=409, detail="A deployed task cannot be changed")
+            raise HTTPException(
+                status_code=409, detail="A deployed task cannot be changed"
+            )
+        if row[1] == "deployed":
+            return {"status": "ok", "deployment_status": "deployed", "path": path}
+        expected_path = row[4] if row[6] == "file" else posixpath.join(row[4], row[5])
+        if data.status == "deployed" and row[4] and path != expected_path:
+            raise HTTPException(
+                400, "Deployed path does not match the requested target"
+            )
         cur.execute(
             """UPDATE honeytoken_deployments SET status = %s, deployed_path = %s, error = %s,
+               integrity_status=CASE WHEN %s='deployed' THEN 'intact' ELSE 'error' END,
                completed_at = now(), updated_at = now() WHERE id = %s""",
-            (data.status, path or None, data.error or None, task_id),
+            (data.status, path or None, data.error or None, data.status, task_id),
         )
         if data.status == "deployed":
-            cur.execute("UPDATE honeytoken_files SET file_path = %s WHERE id = %s", (path, row[0]))
-        intended_path = row[4] if row[6] == "file" else posixpath.join(row[4], row[5]) if row[4] else "auto"
+            cur.execute(
+                "UPDATE honeytoken_files SET file_path = %s WHERE id = %s",
+                (path, row[0]),
+            )
+        intended_path = (
+            row[4]
+            if row[6] == "file"
+            else posixpath.join(row[4], row[5])
+            if row[4]
+            else "auto"
+        )
         placement = f"node:{data.node_id}, path:{path or intended_path}, name:{row[3]}, status:{data.status}"
-        cur.execute("UPDATE honeytoken_files SET placement = %s WHERE id = %s", (placement, row[0]))
+        cur.execute(
+            "UPDATE honeytoken_files SET placement = %s WHERE id = %s",
+            (placement, row[0]),
+        )
     return {"status": "ok", "deployment_status": data.status, "path": path}

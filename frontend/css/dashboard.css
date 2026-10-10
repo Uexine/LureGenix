@@ -128,3 +128,41 @@ tbody tr:hover { background:#fcfcff; }
 .tokens-table td { max-width:320px; overflow-wrap:anywhere; }
 .form-group input:disabled { opacity:.6; cursor:not-allowed; }
 .btn-generate { white-space:normal; height:auto; min-height:39px; }
+.discovery-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+.discovery-controls input {
+    min-width: 0;
+    max-width: 100%;
+    width: 220px;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+#scanResults { overflow-wrap: anywhere; margin-bottom: 16px; }
+#generatorStatus { font-size: 13px; overflow-wrap: anywhere; }
+#passwordDialog {
+    width: 360px;
+    max-width: calc(100% - 32px);
+    box-sizing: border-box;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 24px;
+}
+#passwordDialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+#passwordForm { display: grid; gap: 12px; }
+#passwordForm h2 { font-size: 20px; }
+#passwordForm input { min-width: 0; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; }
+.password-actions { display: flex; justify-content: flex-end; gap: 12px; }
+.mobile-menu-toggle { display: none; }
+@media (max-width: 780px) {
+    .mobile-menu-toggle { display: grid; flex: 0 0 34px; }
+    .page-title { flex: 1; min-width: 0; }
+    .user-profile .logout-label { display: none; }
+    .event-item { flex-wrap: wrap; }
+    .event-type { display: block; order: 3; flex-basis: 100%; max-width: none; white-space: normal; overflow-wrap: anywhere; }
+}

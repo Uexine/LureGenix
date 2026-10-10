@@ -1,2 +1,2 @@
-requests
-inotify-simple>=2.0; sys_platform == "linux"
+requests==2.34.2
+inotify-simple>=2.0,<3; sys_platform == "linux"

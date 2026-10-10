@@ -1,71 +1,38 @@
-async function login() {
-    const username = document.getElementById('username').value.trim();
-    const password = document.getElementById('password').value;
-    const errorDiv = document.getElementById('error');
-    const loginBtn = document.getElementById('loginBtn');
-
-    // Простая валидация
-    if (!username || !password) {
-        errorDiv.textContent = 'Заполните все поля';
-        errorDiv.style.display = 'block';
-        return;
-    }
-
-    // Блокируем кнопку
-    loginBtn.disabled = true;
-    loginBtn.innerHTML = '<span>Вход...</span> <i class="fas fa-spinner fa-spin"></i>';
-
+async function login(event) {
+    event.preventDefault();
+    const button = document.getElementById("loginBtn");
+    if (button.disabled) return;
+    const error = document.getElementById("error");
+    const username = document.getElementById("username").value.trim();
+    const password = document.getElementById("password").value;
+    button.disabled = true;
+    error.style.display = "none";
     try {
-        // Пароль передаётся только в теле запроса; в production обязательно использовать HTTPS
-        const response = await fetch('/api/login', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ username, password })
+        const response = await fetch("/api/login", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({username, password}),
         });
-
-        const data = await response.json();
-
+        const data = await response.json().catch(() => ({}));
         if (!response.ok) {
-            throw new Error(response.status === 401 ? 'Неверный логин или пароль' : (data.detail || 'Ошибка входа'));
+            throw new Error(response.status === 401 ? "Неверный логин или пароль" :
+                response.status === 429 ? "Слишком много попыток. Подождите минуту" : "Сервис входа недоступен");
         }
-
-        if (data.token) {
-            localStorage.setItem('token', data.token);
-            if (data.username) localStorage.setItem('username', data.username);
-            // Плавный редирект
-            loginBtn.innerHTML = '<span>Успех!</span> <i class="fas fa-check"></i>';
-            setTimeout(() => {
-                window.location.href = '/dashboard';
-            }, 500);
-        } else {
-            throw new Error('Токен не получен');
-        }
-
-    } catch (error) {
-        console.error('Login error:', error);
-        errorDiv.textContent = error.message || 'Ошибка соединения с сервером';
-        errorDiv.style.display = 'block';
-        
-        // Разблокируем кнопку
-        loginBtn.disabled = false;
-        loginBtn.innerHTML = '<span>Войти</span> <i class="fas fa-arrow-right"></i>';
+        if (!data.token) throw new Error("Сервер не выдал токен");
+        localStorage.removeItem("token");
+        localStorage.removeItem("username");
+        sessionStorage.setItem("token", data.token);
+        sessionStorage.setItem("username", data.username || username);
+        window.location.href = "/dashboard";
+    } catch (failure) {
+        error.textContent = failure instanceof TypeError ? "Нет соединения с сервером" : failure.message;
+        error.style.display = "block";
+    } finally {
+        button.disabled = false;
     }
 }
 
-// Добавляем обработчик Enter
-document.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') {
-        e.preventDefault();
-        login();
-    }
-});
-
-// Очистка ошибки при вводе
-document.querySelectorAll('input').forEach(input => {
-    input.addEventListener('input', () => {
-        document.getElementById('error').textContent = '';
-        document.getElementById('error').style.display = 'none';
-    });
+document.getElementById("loginForm").addEventListener("submit", login);
+document.getElementById("loginForm").addEventListener("input", () => {
+    document.getElementById("error").style.display = "none";
 });

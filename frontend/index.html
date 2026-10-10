@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
     <title>LureGenix SOC &#183; &#1042;&#1093;&#1086;&#1076;</title>
     <!-- Font Awesome для иконок -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="/vendor/fontawesome/css/all.min.css">
     <!-- Наши стили -->
     <link rel="stylesheet" href="/css/style.css">
 </head>
@@ -14,12 +14,12 @@
         <div class="login-card">
             <!-- Логотип с иконкой -->
             <div class="logo-wrapper">
-                <i class="fas fa-shield-halos"></i>
+                <i class="fas fa-lock"></i>
             </div>
             <h1>LureGenix</h1>
             <p>Security Operations Center</p>
 
-            <form id="loginForm" onsubmit="event.preventDefault(); login();">
+            <form id="loginForm">
                 <div class="input-group">
                     <label for="username">
                         <i class="far fa-user"></i>
@@ -42,7 +42,6 @@
                 </button>
 
                 <div id="error"></div>
-                <p class="login-hint">&#1055;&#1086; &#1091;&#1084;&#1086;&#1083;&#1095;&#1072;&#1085;&#1080;&#1102;: admin / password</p>
             </form>
 
             <div class="login-footer">

@@ -1,83 +1,56 @@
-/**
- * Единый модуль для запросов к API. Все вызовы идут через /api/, с JWT в заголовке.
- */
-const API_BASE = "";
-
 function getToken() {
-    return localStorage.getItem("token");
+    return sessionStorage.getItem("token");
 }
 
 function getUsername() {
-    return localStorage.getItem("username") || "Admin";
-}
-
-function setAuth(token, username) {
-    if (token) localStorage.setItem("token", token);
-    if (username) localStorage.setItem("username", username);
+    return sessionStorage.getItem("username") || "Admin";
 }
 
 function clearAuth() {
-    localStorage.removeItem("token");
-    localStorage.removeItem("username");
+    sessionStorage.removeItem("token");
+    sessionStorage.removeItem("username");
 }
 
-/**
- * GET/POST к API с авторизацией. При 401 — редирект на логин.
- * @param {string} path - путь без ведущего слэша, например "events", "tokens"
- * @param {object} opts - { method, body }
- * @returns {Promise<{ ok: boolean, data?: any, status: number }>}
- */
-async function api(path, opts = {}) {
+function apiError(result, fallback = "Ошибка сервера") {
+    let detail = result.data && result.data.detail;
+    if (detail && typeof detail === "object" && !Array.isArray(detail)) detail = detail.detail;
+    if (Array.isArray(detail)) return detail.map(item => item.msg || fallback).join(", ");
+    return typeof detail === "string" ? detail : fallback;
+}
+
+async function api(path, {method = "GET", body} = {}) {
     const token = getToken();
     if (!token) {
         window.location.href = "/";
-        return { ok: false, status: 401 };
+        return {ok: false, status: 401};
     }
-    if (typeof path !== "string") path = "";
-    path = path.replace(/\s+/g, "_").replace(/\/+/g, "/");
-    const url = (path.startsWith("/") ? path : "/api/" + path).replace(/\/+/g, "/");
-    const headers = {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + token,
-    };
     const options = {
-        method: opts.method || "GET",
-        headers,
+        method,
+        headers: {"Content-Type": "application/json", "Authorization": "Bearer " + token},
     };
-    if (opts.body !== undefined && opts.method !== "GET") {
-        options.body = typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body);
-    }
+    if (body !== undefined && method !== "GET") options.body = JSON.stringify(body);
     try {
-        const r = await fetch(url, options);
-        if (r.status === 401) {
+        const response = await fetch("/api/" + path.replace(/^\/+/, ""), options);
+        if (response.status === 401) {
             clearAuth();
             window.location.href = "/";
-            return { ok: false, status: 401 };
+            return {ok: false, status: 401};
         }
-        const data = r.ok ? await r.json().catch(() => ({})) : await r.json().catch(() => ({ detail: "Ошибка сервера" }));
-        return { ok: r.ok, data, status: r.status };
-    } catch (e) {
-        console.error("api error", path, e);
-        return { ok: false, data: { detail: String(e.message) }, status: 0 };
+        const data = await response.json().catch(() => ({detail: "Неверный ответ сервера"}));
+        return {ok: response.ok, data, status: response.status};
+    } catch {
+        return {ok: false, data: {detail: "Нет соединения с сервером"}, status: 0};
     }
 }
 
-async function apiGet(path) {
-    return api(path, { method: "GET" });
+function apiGet(path) {
+    return api(path);
 }
 
-async function apiPost(path, body) {
-    return api(path, { method: "POST", body });
+function apiPost(path, body) {
+    return api(path, {method: "POST", body});
 }
 
-async function apiPut(path, body) {
-    return api(path, { method: "PUT", body: body || {} });
-}
-
-// Глобально для скриптов, подключаемых после api.js (на случай кэша)
-if (typeof window !== "undefined") {
-    window.apiPut = apiPut;
-    window.apiGet = apiGet;
-    window.apiPost = apiPost;
-    window.api = api;
+function apiPut(path, body = {}) {
+    return api(path, {method: "PUT", body});
 }

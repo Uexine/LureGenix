@@ -7,7 +7,6 @@ import tarfile
 
 import requests
 
-
 TOKEN_TYPES = {
     "ssh_key": ("Private SSH key", "id_rsa_backup"),
     "env_file": ("Environment file", "credentials.env"),
@@ -51,27 +50,31 @@ def llm_content(token_type):
                 "model": model,
                 "stream": False,
                 "format": {
-                    "type": "object", "properties": {"content": {"type": "string"}},
-                    "required": ["content"], "additionalProperties": False,
+                    "type": "object",
+                    "properties": {"content": {"type": "string"}},
+                    "required": ["content"],
+                    "additionalProperties": False,
                 },
                 "options": {"num_predict": 2000, "num_ctx": 4096, "temperature": 0.6},
                 "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Generate realistic fictional file content for a defensive honeytoken. "
-                        "Return a JSON object with exactly one string field named content. "
-                        "Use only invented names and credentials, reserved example domains, "
-                        "and documentation IP addresses. Do not label the content as a decoy. "
-                        "Do not include markdown code fences."
-                    ),
-                },
-                {"role": "user", "content": FORMAT_INSTRUCTIONS[token_type]},
+                    {
+                        "role": "system",
+                        "content": (
+                            "Generate realistic fictional file content for a defensive honeytoken. "
+                            "Return a JSON object with exactly one string field named content. "
+                            "Use only invented names and credentials, reserved example domains, "
+                            "and documentation IP addresses. Do not label the content as a decoy. "
+                            "Do not include markdown code fences."
+                        ),
+                    },
+                    {"role": "user", "content": FORMAT_INSTRUCTIONS[token_type]},
                 ],
             },
         )
         if response.status_code == 404:
-            raise GenerationError(f"Local model not found; load OLLAMA_MODEL={model} into Ollama first")
+            raise GenerationError(
+                f"Local model not found; load OLLAMA_MODEL={model} into Ollama first"
+            )
         response.raise_for_status()
         result = response.json()
         if result.get("error"):
@@ -79,22 +82,35 @@ def llm_content(token_type):
         if result.get("done") is not True or result.get("done_reason") == "length":
             raise GenerationError("LLM response was truncated; try generating again")
         content = json.loads(result["message"]["content"])["content"]
-        if not isinstance(content, str) or not content.strip() or len(content.encode("utf-8")) > 100_000:
+        if (
+            not isinstance(content, str)
+            or not content.strip()
+            or len(content.encode("utf-8")) > 100_000
+        ):
             raise GenerationError("LLM returned empty or oversized file content")
         if token_type == "docker_config" and not isinstance(json.loads(content), dict):
             raise GenerationError("LLM returned an invalid registry configuration")
         if token_type in ("db_dump", "backup_archive"):
-            if "CREATE TABLE" not in content.upper() or "INSERT INTO" not in content.upper():
+            if (
+                "CREATE TABLE" not in content.upper()
+                or "INSERT INTO" not in content.upper()
+            ):
                 raise GenerationError("LLM response does not contain a SQL backup")
         return content.strip() + "\n"
     except GenerationError:
         raise
     except requests.exceptions.Timeout as exc:
-        raise GenerationError("Local model timed out; try a smaller model or increase LLM_TIMEOUT_SECONDS") from exc
+        raise GenerationError(
+            "Local model timed out; try a smaller model or increase LLM_TIMEOUT_SECONDS"
+        ) from exc
     except requests.exceptions.ConnectionError as exc:
-        raise GenerationError("Cannot connect to local Ollama; check the ollama service and OLLAMA_BASE_URL") from exc
+        raise GenerationError(
+            "Cannot connect to local Ollama; check the ollama service and OLLAMA_BASE_URL"
+        ) from exc
     except Exception as exc:
-        raise GenerationError(f"Local LLM generation failed ({type(exc).__name__}); check Ollama and OLLAMA_MODEL") from exc
+        raise GenerationError(
+            f"Local LLM generation failed ({type(exc).__name__}); check Ollama and OLLAMA_MODEL"
+        ) from exc
 
 
 def generate_file(token_type):
@@ -115,11 +131,18 @@ def generate_file(token_type):
     if token_type == "password":
         return ("backup_admin:" + secrets.token_urlsafe(18) + "\n").encode(), "local"
 
-    mode = os.getenv("GENERATION_MODE", "llm")
+    mode = os.getenv("GENERATION_MODE", "template")
     if mode not in ("llm", "template"):
         raise GenerationError("GENERATION_MODE must be llm or template")
     source = mode
-    content = template_content(token_type) if mode == "template" else llm_content(token_type)
+    content = (
+        template_content(token_type) if mode == "template" else llm_content(token_type)
+    )
+    return encode_content(token_type, content), source
+
+
+def encode_content(token_type, content):
+    # Generated text is packaged as data; SQL and shell-history decoys are never executed.
     if token_type == "backup_archive":
         buffer = io.BytesIO()
         payload = content.encode("utf-8")
@@ -128,7 +151,7 @@ def generate_file(token_type):
             entry.size = len(payload)
             entry.mode = 0o600
             archive.addfile(entry, io.BytesIO(payload))
-        return buffer.getvalue(), source
+        return buffer.getvalue()
     if token_type == "docx":
         from docx import Document
 
@@ -137,9 +160,10 @@ def generate_file(token_type):
             document.add_paragraph(line)
         buffer = io.BytesIO()
         document.save(buffer)
-        return buffer.getvalue(), source
+        return buffer.getvalue()
     if token_type == "pdf":
         from html import escape
+
         from reportlab.lib.styles import getSampleStyleSheet
         from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
@@ -148,10 +172,12 @@ def generate_file(token_type):
         paragraphs = []
         for line in content.splitlines():
             if line.strip():
-                paragraphs.extend([Paragraph(escape(line), styles["BodyText"]), Spacer(1, 8)])
+                paragraphs.extend(
+                    [Paragraph(escape(line), styles["BodyText"]), Spacer(1, 8)]
+                )
         SimpleDocTemplate(buffer).build(paragraphs)
-        return buffer.getvalue(), source
-    return content.encode("utf-8"), source
+        return buffer.getvalue()
+    return content.encode("utf-8")
 
 
 def template_content(token_type):
@@ -168,6 +194,20 @@ def template_content(token_type):
         "backup_archive": sql,
         "bash_history": "cd /var/www\nls -la\npg_dump -h db.example.com -U backup_admin app > /opt/database_backup.sql\n",
         "log_file": '192.0.2.10 - - [01/Jan/2026:12:00:00 +0000] "GET /admin HTTP/1.1" 200 512\n',
-        "docker_config": json.dumps({"auths": {"registry.example.com": {"auth": base64.b64encode(f"backup_admin:{password}".encode()).decode()}}}) + "\n",
+        "docker_config": json.dumps(
+            {
+                "auths": {
+                    "registry.example.com": {
+                        "auth": base64.b64encode(
+                            f"backup_admin:{password}".encode()
+                        ).decode()
+                    }
+                }
+            }
+        )
+        + "\n",
     }
-    return templates.get(token_type, f"Operations backup notes\n\nBackup endpoint: https://backup.example.com\nAccount: backup_admin\nRecovery password: {password}\n")
+    return templates.get(
+        token_type,
+        f"Operations backup notes\n\nBackup endpoint: https://backup.example.com\nAccount: backup_admin\nRecovery password: {password}\n",
+    )

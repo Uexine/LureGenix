@@ -1,5 +1,3 @@
--- Таблица для списка созданных файлов-приманок (placement, created_at).
--- Запуск: docker exec -i luregenix-postgres-1 psql -U <DB_USER> -d <DB_NAME> < db/03_honeytoken_files.sql
 CREATE TABLE IF NOT EXISTS honeytoken_files (
     id SERIAL PRIMARY KEY,
     token_type TEXT NOT NULL,

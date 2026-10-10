@@ -4,3 +4,10 @@ __pycache__/
 .pytest_cache/
 test-results/
 .env
+backups/
+backup.sql
+*.env.tmp
+agent-install.env
+agent-*.env
+.ruff_cache/
+certs/

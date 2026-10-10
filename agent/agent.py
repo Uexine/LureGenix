@@ -1,14 +1,18 @@
 """Host-installed Linux agent: deployment tasks, inotify monitoring, durable delivery."""
+
 import base64
 import hashlib
 import json
 import logging
 import os
-from pathlib import Path
+import secrets
 import socket
 import stat
 import sys
 import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import requests
@@ -22,14 +26,79 @@ NODE_HOSTNAME = os.getenv("NODE_HOSTNAME") or socket.gethostname()
 NODE_IP = os.getenv("NODE_IP", "")
 HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL", "60"))
 TASK_POLL_INTERVAL = int(os.getenv("TASK_POLL_INTERVAL", "10"))
-ALLOWED_DIRS = [p.strip() for p in os.getenv("AGENT_ALLOWED_DIRS", "/etc,/var/www,/home,/opt").split(",") if p.strip()]
-AUTO_DIRS = [p.strip() for p in os.getenv("AGENT_AUTO_DIRS", "/var/www/html,/var/www,/opt,/home,/etc").split(",") if p.strip()]
-STATE_FILE = Path(os.getenv("AGENT_STATE_FILE", "~/.local/state/luregenix/agent.json")).expanduser()
+ALLOWED_DIRS = [
+    p.strip()
+    for p in os.getenv("AGENT_ALLOWED_DIRS", "/etc,/var/www,/home,/opt").split(",")
+    if p.strip()
+]
+AUTO_DIRS = [
+    p.strip()
+    for p in os.getenv(
+        "AGENT_AUTO_DIRS", "/var/www/html,/var/www,/opt,/home,/etc"
+    ).split(",")
+    if p.strip()
+]
+STATE_FILE = Path(
+    os.getenv("AGENT_STATE_FILE", "~/.local/state/luregenix/agent.json")
+).expanduser()
+FILE_MODE = int(os.getenv("AGENT_FILE_MODE", "0644"), 8)
+if FILE_MODE not in (0o600, 0o640, 0o644):
+    raise ValueError("AGENT_FILE_MODE must be 0600, 0640 or 0644")
+DENIED_PATHS = (
+    "/opt/luregenix-agent",
+    "/etc/luregenix-agent.env",
+    "/etc/systemd",
+    "/etc/init.d",
+    "/etc/cron.d",
+    "/etc/cron.daily",
+    "/etc/cron.hourly",
+    "/etc/cron.weekly",
+    "/etc/cron.monthly",
+    "/etc/crontab",
+    "/etc/sudoers",
+    "/etc/sudoers.d",
+    "/etc/pam.d",
+    "/etc/ssh",
+    "/etc/ld.so.preload",
+    "/etc/ld.so.conf",
+    "/etc/ld.so.conf.d",
+    "/etc/profile",
+    "/etc/profile.d",
+    "/etc/environment",
+    "/etc/security",
+    "/etc/network",
+)
 
 
 def allowed_path(path):
     resolved = os.path.realpath(path)
-    return any(os.path.commonpath([resolved, os.path.realpath(root)]) == os.path.realpath(root) for root in ALLOWED_DIRS)
+    if any(
+        resolved == denied or resolved.startswith(denied + "/")
+        for denied in DENIED_PATHS
+    ):
+        return False
+    if ".ssh" in Path(resolved).parts or Path(resolved).name in (
+        ".bashrc",
+        ".bash_profile",
+        ".profile",
+        ".zshrc",
+    ):
+        return False
+    if Path(resolved).suffix.lower() in (
+        ".sh",
+        ".py",
+        ".php",
+        ".pl",
+        ".rb",
+        ".so",
+        ".service",
+        ".timer",
+    ):
+        return False
+    return any(
+        os.path.commonpath([resolved, os.path.realpath(root)]) == os.path.realpath(root)
+        for root in ALLOWED_DIRS
+    )
 
 
 def target_file(task):
@@ -40,9 +109,22 @@ def target_file(task):
     if target:
         if not os.path.isabs(target) or ".." in Path(target).parts:
             raise ValueError("Target must be an absolute path without '..'")
-        path = target if task.get("target_kind") == "file" else os.path.join(target, filename)
+        path = (
+            target
+            if task.get("target_kind") == "file"
+            else os.path.join(target, filename)
+        )
     else:
-        directory = next((p for p in AUTO_DIRS if os.path.isdir(p) and allowed_path(p) and os.access(p, os.W_OK | os.X_OK)), None)
+        directory = next(
+            (
+                p
+                for p in AUTO_DIRS
+                if os.path.isdir(p)
+                and allowed_path(p)
+                and os.access(p, os.W_OK | os.X_OK)
+            ),
+            None,
+        )
         if not directory:
             raise ValueError("No existing writable directory in AGENT_AUTO_DIRS")
         path = os.path.join(directory, filename)
@@ -58,7 +140,11 @@ def open_directory(path):
     descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
         for component in Path(path).parts[1:]:
-            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            child = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=descriptor,
+            )
             os.close(descriptor)
             descriptor = child
         return descriptor
@@ -71,14 +157,18 @@ def write_file(path, payload, token_id):
     directory = open_directory(os.path.dirname(path))
     try:
         descriptor = os.open(
-            os.path.basename(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            0o600, dir_fd=directory,
+            os.path.basename(path),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=directory,
         )
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
             os.setxattr(stream.fileno(), "user.luregenix.token_id", token_id.encode())
+            os.fchmod(stream.fileno(), FILE_MODE)
+            os.fsync(stream.fileno())
         os.fsync(directory)
     finally:
         os.close(directory)
@@ -86,7 +176,13 @@ def write_file(path, payload, token_id):
 
 def owned_file(path, token_id):
     try:
-        return stat.S_ISREG(os.lstat(path).st_mode) and os.getxattr(path, "user.luregenix.token_id", follow_symlinks=False).decode() == token_id
+        return (
+            stat.S_ISREG(os.lstat(path).st_mode)
+            and os.getxattr(
+                path, "user.luregenix.token_id", follow_symlinks=False
+            ).decode()
+            == token_id
+        )
     except OSError:
         return False
 
@@ -96,8 +192,18 @@ def discover_ip():
         return NODE_IP
     parsed = urlsplit(GATEWAY_URL)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as connection:
-        connection.connect((parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)))
-        return connection.getsockname()[0]
+        connection.connect(
+            (parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+        )
+        address = connection.getsockname()[0]
+        if address.startswith("127."):
+            try:
+                # Route selection only: no datagrams are sent to this documentation address.
+                connection.connect(("192.0.2.1", 9))
+                address = connection.getsockname()[0]
+            except OSError:
+                pass
+        return address
 
 
 class Agent:
@@ -105,11 +211,25 @@ class Agent:
         self.monitor = monitor
         self.node_id = None
         self.session = requests.Session()
-        self.session.headers["X-Agent-Secret"] = AGENT_SECRET
+        self.session.verify = os.getenv("AGENT_CA_FILE") or True
         self.state = {"tasks": {}, "events": []}
         if STATE_FILE.exists():
             # Stop on a corrupt journal rather than risk duplicating deployment.
             self.state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        self.state.setdefault("agent_id", str(uuid.uuid4()))
+        self.state.setdefault("credential", secrets.token_urlsafe(48))
+        self.state["events"] = [
+            event
+            for event in self.state["events"]
+            if event.get("action") != "heartbeat"
+        ]
+        self.session.headers.update(
+            {
+                "X-Agent-Id": self.state["agent_id"],
+                "X-Agent-Token": self.state["credential"],
+            }
+        )
+        self.persist()
         self.watches = {}
         self.last_alert = {}
         self.monitor_failures = set()
@@ -118,35 +238,93 @@ class Agent:
                 try:
                     self.watch(record["token_id"], record["path"])
                 except (OSError, ValueError) as exc:
-                    logger.warning("Could not restore monitoring for %s: %s", record["path"], exc)
+                    logger.warning(
+                        "Could not restore monitoring for %s: %s", record["path"], exc
+                    )
 
     def persist(self):
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         temporary = STATE_FILE.with_suffix(".tmp")
-        descriptor = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        descriptor = os.open(
+            str(temporary), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600
+        )
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             json.dump(self.state, stream)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, STATE_FILE)
+        if sys.platform == "linux":
+            directory = os.open(str(STATE_FILE.parent), os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
 
     def request(self, method, path, **kwargs):
-        response = self.session.request(method, f"{GATEWAY_URL}/api/{path}", timeout=10, **kwargs)
+        response = self.session.request(
+            method, f"{GATEWAY_URL}/api/{path}", timeout=10, **kwargs
+        )
         response.raise_for_status()
         return response.json()
 
     def register(self):
-        result = self.request("POST", "register", json={"hostname": NODE_HOSTNAME, "ip": discover_ip()})
+        result = self.request(
+            "POST",
+            "register",
+            headers={"X-Agent-Secret": AGENT_SECRET},
+            json={
+                "hostname": NODE_HOSTNAME,
+                "ip": discover_ip(),
+                "agent_id": self.state["agent_id"],
+                "credential": self.state["credential"],
+            },
+        )
         self.node_id = result["node_id"]
+        self.state["node_id"] = self.node_id
+        self.state["last_registration"] = time.time()
+        self.persist()
 
     def queue_event(self, token_id, action, path=""):
-        self.state["events"].append({"token_id": token_id, "action": action, "file_path": path, "source_hostname": NODE_HOSTNAME})
+        self.state["events"].append(
+            {
+                "event_id": str(uuid.uuid4()),
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+                "token_id": token_id,
+                "action": action,
+                "file_path": path,
+                "source_hostname": NODE_HOSTNAME,
+            }
+        )
         self.persist()
 
     def flush_events(self):
         deadline = time.monotonic() + 2
         while self.state["events"] and time.monotonic() < deadline:
-            result = self.request("POST", "agent/event", json=self.state["events"][0])
+            if "event_id" not in self.state["events"][0]:
+                self.state["events"][0]["event_id"] = str(uuid.uuid4())
+                self.persist()
+            try:
+                result = self.request(
+                    "POST", "agent/event", json=self.state["events"][0]
+                )
+            except requests.HTTPError as exc:
+                if exc.response is None or exc.response.status_code not in (
+                    400,
+                    403,
+                    404,
+                    409,
+                    422,
+                ):
+                    raise
+                rejected = self.state.setdefault("rejected_events", [])
+                rejected.append(self.state["events"].pop(0))
+                self.state["rejected_events"] = rejected[-100:]
+                self.persist()
+                logger.error(
+                    "Rejected event preserved in the local journal (HTTP %s)",
+                    exc.response.status_code,
+                )
+                continue
             if result.get("status") != "ok":
                 raise RuntimeError("Event was not saved")
             self.state["events"].pop(0)
@@ -154,6 +332,7 @@ class Agent:
 
     def watch(self, token_id, path):
         from inotify_simple import flags
+
         if not allowed_path(path):
             raise ValueError("Monitor path is outside AGENT_ALLOWED_DIRS")
         parent = os.path.dirname(path)
@@ -161,88 +340,156 @@ class Agent:
             if entry["parent"] == parent:
                 entry["files"][os.path.basename(path)] = token_id
                 return
-        mask = (flags.OPEN | flags.ACCESS | flags.MODIFY | flags.CLOSE_WRITE | flags.ATTRIB |
-                flags.DELETE | flags.MOVED_FROM | flags.DELETE_SELF | flags.MOVE_SELF |
-                flags.ONLYDIR | flags.DONT_FOLLOW)
+        mask = (
+            flags.OPEN
+            | flags.ACCESS
+            | flags.MODIFY
+            | flags.CLOSE_WRITE
+            | flags.ATTRIB
+            | flags.DELETE
+            | flags.MOVED_FROM
+            | flags.MOVED_TO
+            | flags.CREATE
+            | flags.DELETE_SELF
+            | flags.MOVE_SELF
+            | flags.ONLYDIR
+            | flags.DONT_FOLLOW
+        )
         descriptor = self.monitor.add_watch(parent, mask)
-        self.watches[descriptor] = {"parent": parent, "files": {os.path.basename(path): token_id}}
+        self.watches[descriptor] = {
+            "parent": parent,
+            "files": {os.path.basename(path): token_id},
+        }
 
     def deploy(self, task):
         key = task["token_id"]
         record = self.state["tasks"].get(key)
+        if (
+            record
+            and record["status"] == "failed"
+            and record.get("attempt", 1) != task.get("attempt", 1)
+        ):
+            record = None
         if record and record["status"] in ("deployed", "failed"):
             return record
         try:
             payload = base64.b64decode(task["content_base64"], validate=True)
+            if len(payload) > 1_000_000:
+                raise ValueError("File payload exceeds the agent size limit")
             if hashlib.sha256(payload).hexdigest() != task["sha256"]:
                 raise ValueError("File payload checksum mismatch")
             path = record["path"] if record else target_file(task)
             if record is None:
-                record = {"status": "writing", "path": path, "token_id": task["token_id"]}
+                record = {
+                    "status": "writing",
+                    "path": path,
+                    "token_id": task["token_id"],
+                }
                 self.state["tasks"][key] = record
                 self.persist()
             if os.path.lexists(path):
                 if not owned_file(path, task["token_id"]):
-                    raise FileExistsError("File already exists; choose a different filename")
+                    raise FileExistsError(
+                        "File already exists; choose a different filename"
+                    )
                 # Recovery after a crash between write and acknowledgement. Verify before watching.
-                with open(path, "rb") as stream:
+                with os.fdopen(
+                    os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb"
+                ) as stream:
                     if hashlib.sha256(stream.read()).hexdigest() != task["sha256"]:
-                        raise ValueError("Previously deployed file has changed; refusing to overwrite")
+                        raise ValueError(
+                            "Previously deployed file has changed; refusing to overwrite"
+                        )
             else:
                 write_file(path, payload, task["token_id"])
             self.monitor_events(timeout=0)
             self.watch(task["token_id"], path)
             record.update(status="deployed", error="")
         except Exception as exc:
-            record = {"status": "failed", "path": record["path"] if record else "", "token_id": task["token_id"], "error": str(exc)[:1000]}
+            record = {
+                "status": "failed",
+                "path": record["path"] if record else "",
+                "token_id": task["token_id"],
+                "error": str(exc)[:1000],
+            }
         self.state["tasks"][key] = record
+        record["attempt"] = task.get("attempt", 1)
         self.persist()
         return record
 
     def poll_tasks(self):
         tasks = self.request("GET", "agent/tasks", params={"node_id": self.node_id})
         for task in tasks:
-            key = task["token_id"]
             if task["status"] == "deployed":
-                try:
-                    self.watch(task["token_id"], task["deployed_path"])
-                    self.monitor_failures.discard(key)
-                    if key not in self.state["tasks"]:
-                        self.state["tasks"][key] = {"status": "deployed", "path": task["deployed_path"], "token_id": key, "announced": True}
-                        self.persist()
-                except (OSError, ValueError) as exc:
-                    if key not in self.monitor_failures:
-                        self.queue_event(task["token_id"], "monitor_error", task["deployed_path"])
-                        self.monitor_failures.add(key)
-                    logger.warning("Monitoring failed for %s: %s", task["deployed_path"], exc)
-                continue
-            record = self.deploy(task)
-            result = self.request(
-                "PUT", f"agent/tasks/{task['id']}/result",
-                json={"node_id": self.node_id, "status": record["status"],
-                      "deployed_path": record["path"] if record["status"] == "deployed" else "",
-                      "error": record.get("error", "")},
-            )
-            if result.get("status") != "ok":
-                raise RuntimeError("Deployment result was not saved")
-            if not record.get("announced"):
-                self.queue_event(task["token_id"], "deployed" if record["status"] == "deployed" else "deployment_failed", record["path"])
-                record["announced"] = True
+                self.restore_monitor(task)
+            else:
+                self.report_deployment(task, self.deploy(task))
+
+    def restore_monitor(self, task):
+        key = task["token_id"]
+        try:
+            self.watch(key, task["deployed_path"])
+            self.monitor_failures.discard(key)
+            if key not in self.state["tasks"]:
+                self.state["tasks"][key] = {
+                    "status": "deployed",
+                    "path": task["deployed_path"],
+                    "token_id": key,
+                    "announced": True,
+                }
                 self.persist()
+        except (OSError, ValueError) as exc:
+            if key not in self.monitor_failures:
+                self.queue_event(key, "monitor_error", task["deployed_path"])
+                self.monitor_failures.add(key)
+            logger.warning("Monitoring failed for %s: %s", task["deployed_path"], exc)
+
+    def report_deployment(self, task, record):
+        result = self.request(
+            "PUT",
+            f"agent/tasks/{task['id']}/result",
+            json={
+                "node_id": self.node_id,
+                "status": record["status"],
+                "deployed_path": record["path"]
+                if record["status"] == "deployed"
+                else "",
+                "error": record.get("error", ""),
+                "attempt": task.get("attempt", 1),
+            },
+        )
+        if result.get("status") != "ok":
+            raise RuntimeError("Deployment result was not saved")
+        # A lost HTTP acknowledgement must not cause the file to be written again.
+        if not record.get("announced"):
+            self.queue_event(
+                task["token_id"],
+                "deployed" if record["status"] == "deployed" else "deployment_failed",
+                record["path"],
+            )
+            record["announced"] = True
+            self.persist()
 
     def monitor_events(self, timeout=1000):
         from inotify_simple import flags
+
         batch = {}
         for event in self.monitor.read(timeout=timeout):
             if event.mask & flags.Q_OVERFLOW:
-                self.queue_event(f"node_{self.node_id}", "monitor_error", "inotify queue overflow")
+                self.queue_event(
+                    f"node_{self.node_id}", "monitor_error", "inotify queue overflow"
+                )
                 continue
             entry = self.watches.get(event.wd)
             if not entry:
                 continue
             if event.mask & (flags.DELETE_SELF | flags.MOVE_SELF | flags.IGNORED):
                 for filename, token_id in entry["files"].items():
-                    batch[token_id] = ("delete", os.path.join(entry["parent"], filename), 4)
+                    batch[token_id] = (
+                        "delete",
+                        os.path.join(entry["parent"], filename),
+                        4,
+                    )
                 self.watches.pop(event.wd, None)
                 if not event.mask & flags.IGNORED:
                     try:
@@ -256,13 +503,23 @@ class Agent:
             action, priority = "open", 1
             if event.mask & (flags.DELETE | flags.MOVED_FROM):
                 action, priority = "delete", 4
-            elif event.mask & (flags.MODIFY | flags.CLOSE_WRITE | flags.ATTRIB):
+            elif event.mask & (
+                flags.MODIFY
+                | flags.CLOSE_WRITE
+                | flags.ATTRIB
+                | flags.MOVED_TO
+                | flags.CREATE
+            ):
                 action, priority = "modify", 3
             elif event.mask & flags.ACCESS:
                 action, priority = "access", 2
             previous = batch.get(token_id)
             if not previous or priority > previous[2]:
-                batch[token_id] = (action, os.path.join(entry["parent"], event.name), priority)
+                batch[token_id] = (
+                    action,
+                    os.path.join(entry["parent"], event.name),
+                    priority,
+                )
         now = time.monotonic()
         for token_id, (action, path, _) in batch.items():
             cooldown_key = (token_id, action)
@@ -274,10 +531,25 @@ class Agent:
 def main():
     if sys.platform != "linux":
         raise SystemExit("Run this agent directly on the target Linux server")
-    if not AGENT_SECRET:
-        raise SystemExit("Set AGENT_SECRET to the same value configured on the gateway")
-    from inotify_simple import INotify
+    if len(AGENT_SECRET) < 32:
+        raise SystemExit(
+            "Set AGENT_SECRET to the private enrollment secret configured on the gateway"
+        )
+    if not 1 <= HEARTBEAT_INTERVAL <= 120 or not 1 <= TASK_POLL_INTERVAL <= 60:
+        raise SystemExit(
+            "Heartbeat must be 1..120 seconds; task polling must be 1..60 seconds"
+        )
+    gateway = urlsplit(GATEWAY_URL)
+    if (
+        gateway.scheme not in ("http", "https")
+        or not gateway.hostname
+        or gateway.username
+        or gateway.password
+    ):
+        raise SystemExit("GATEWAY_URL must be an HTTP(S) address without credentials")
     import fcntl
+
+    from inotify_simple import INotify
 
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     # One writer per journal; duplicate processes must not deploy the same task.
@@ -290,7 +562,6 @@ def main():
             if now >= heartbeat_at:
                 try:
                     agent.register()
-                    agent.queue_event(f"node_{agent.node_id}", "heartbeat")
                     heartbeat_at = now + HEARTBEAT_INTERVAL
                 except Exception as exc:
                     logger.warning("Registration/heartbeat failed: %s", exc)

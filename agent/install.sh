@@ -14,6 +14,7 @@ if [[ -n "$config_file" ]]; then
     grep -Eq '^GATEWAY_URL=https?://.+$' "$config_file" || { echo "GATEWAY_URL is required" >&2; exit 1; }
 fi
 command -v python3 >/dev/null
+python3 -c 'import sys; assert sys.version_info >= (3,10), "Python 3.10 or newer is required"'
 command -v systemctl >/dev/null
 install -d -m 0755 /opt/luregenix-agent
 install -d -m 0700 /var/lib/luregenix-agent
@@ -31,14 +32,23 @@ install -m 0644 "${script_dir}/luregenix-agent.service" /etc/systemd/system/lure
 systemctl daemon-reload
 systemctl enable luregenix-agent
 if [[ -n "$config_file" ]]; then
+    started_at="$(date +%s)"
     systemctl restart luregenix-agent
     sleep 3
     if ! systemctl is-active --quiet luregenix-agent; then
         journalctl -u luregenix-agent -n 30 --no-pager >&2
         exit 1
     fi
-    printf 'Agent service is running. Verify node registration in the dashboard.\n'
-    exit 0
+    for attempt in {1..30}; do
+        if python3 -c 'import json,sys; data=json.load(open("/var/lib/luregenix-agent/agent.json")); assert data.get("node_id") and data.get("last_registration",0) >= int(sys.argv[1])' "$started_at" 2>/dev/null; then
+            printf 'Agent service is running and registered with the application.\n'
+            exit 0
+        fi
+        sleep 2
+    done
+    printf 'Agent service started but registration failed. Check URL, TLS, enrollment secret and migrations.\n' >&2
+    journalctl -u luregenix-agent -n 30 --no-pager >&2
+    exit 1
 fi
 printf 'Set GATEWAY_URL and AGENT_SECRET: sudoedit /etc/luregenix-agent.env\n'
 printf 'Start or update the agent: sudo systemctl restart luregenix-agent\n'

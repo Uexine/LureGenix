@@ -1,5 +1,5 @@
-fastapi
-uvicorn
-requests
-PyJWT
-websockets
+fastapi==0.142.2
+uvicorn==0.54.0
+requests==2.34.2
+PyJWT==2.15.1
+websockets==17.2
