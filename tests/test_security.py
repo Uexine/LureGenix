@@ -1,6 +1,8 @@
 import datetime
 import hashlib
+import json
 import os
+import sys
 import tempfile
 import unittest
 import uuid
@@ -16,6 +18,8 @@ from test_deployment import ROOT, database, gateway, load_module, service
 discovery = load_module("tested_discovery", "services/discovery_service/main.py")
 events = load_module("tested_events", "services/event_service/main.py")
 setup_env = load_module("tested_setup_env", "tools/setup_env.py")
+with patch.dict(sys.modules, {"setup_env": setup_env}):
+    configure_agent = load_module("tested_configure_agent", "tools/configure_agent.py")
 
 
 class GatewaySecurityTests(unittest.TestCase):
@@ -368,6 +372,187 @@ class EventSecurityTests(unittest.TestCase):
 
 
 class ConfigurationTests(unittest.TestCase):
+    def recovery_containers(self):
+        def container(service, values):
+            return {
+                "Config": {
+                    "Labels": {
+                        "com.docker.compose.project": "luregenix",
+                        "com.docker.compose.service": service,
+                    },
+                    "Env": [key + "=" + value for key, value in values.items()],
+                }
+            }
+
+        return [
+            container(
+                "postgres",
+                {
+                    "POSTGRES_DB": "luregenix",
+                    "POSTGRES_USER": "admin",
+                    "POSTGRES_PASSWORD": "d" * 48,
+                },
+            ),
+            container(
+                "auth_service",
+                {
+                    "DB_NAME": "luregenix",
+                    "DB_USER": "luregenix_app",
+                    "DB_PASSWORD": "p" * 48,
+                    "JWT_SECRET": "j" * 48,
+                },
+            ),
+            container("gateway", {"JWT_SECRET": "j" * 48, "AGENT_SECRET": "a" * 48}),
+        ]
+
+    def recover(self, containers):
+        results = [
+            MagicMock(stdout="db-id auth-id gateway-id\n"),
+            MagicMock(stdout=json.dumps(containers)),
+        ]
+        with patch.object(setup_env.subprocess, "run", side_effect=results):
+            return setup_env.recover_container_env()
+
+    def test_recovery_preserves_owner_application_and_agent_credentials(self):
+        restored = self.recover(self.recovery_containers())
+        with tempfile.TemporaryDirectory(prefix="luregenix-test-") as directory:
+            values, _ = setup_env.configure(
+                Path(directory) / ".env",
+                ROOT / ".env.example",
+                volume="old-volume",
+                recovered=restored,
+            )
+        self.assertEqual(values["DB_USER"], "admin")
+        self.assertEqual(values["APP_DB_USER"], "luregenix_app")
+        for key, value in restored.items():
+            self.assertEqual(values[key], value)
+        self.assertEqual(values["POSTGRES_DATA_VOLUME"], "old-volume")
+
+    def test_partial_env_blank_values_do_not_replace_recovered_passwords(self):
+        restored = self.recover(self.recovery_containers())
+        with tempfile.TemporaryDirectory(prefix="luregenix-test-") as directory:
+            path = Path(directory) / ".env"
+            path.write_text(
+                "DB_PASSWORD=\nAPP_DB_PASSWORD=\nJWT_SECRET=\nAGENT_SECRET=\n",
+                encoding="utf-8",
+            )
+            values, _ = setup_env.configure(
+                path, ROOT / ".env.example", recovered=restored
+            )
+        for key in ("DB_PASSWORD", "APP_DB_PASSWORD", "JWT_SECRET", "AGENT_SECRET"):
+            self.assertEqual(values[key], restored[key])
+
+    def test_recovery_refuses_conflicting_secrets_without_exposing_values(self):
+        containers = self.recovery_containers()
+        containers[-1]["Config"]["Env"].append("JWT_SECRET=conflicting-secret")
+        with self.assertRaises(ValueError) as caught:
+            self.recover(containers)
+        self.assertIn("JWT_SECRET", str(caught.exception))
+        self.assertNotIn("conflicting-secret", str(caught.exception))
+
+    def test_recovery_does_not_invent_missing_enrollment_secret(self):
+        containers = self.recovery_containers()
+        containers[-1]["Config"]["Env"] = ["JWT_SECRET=" + "j" * 48]
+        with self.assertRaisesRegex(ValueError, "AGENT_SECRET"):
+            self.recover(containers)
+
+    def test_recovery_rejects_duplicate_postgres_containers(self):
+        containers = self.recovery_containers()
+        containers.append(containers[0])
+        with self.assertRaisesRegex(ValueError, "ровно один"):
+            self.recover(containers)
+
+    def test_recovery_ignores_unrelated_project(self):
+        containers = self.recovery_containers()
+        containers[-1]["Config"]["Labels"]["com.docker.compose.project"] = (
+            "another-project"
+        )
+        with self.assertRaisesRegex(ValueError, "AGENT_SECRET"):
+            self.recover(containers)
+
+    def test_recovery_does_not_print_existing_secrets(self):
+        restored = self.recover(self.recovery_containers())
+        with (
+            patch.object(sys, "argv", ["setup_env.py", "--recover-env"]),
+            patch.object(
+                setup_env, "existing_database_volume", return_value="old-volume"
+            ),
+            patch.object(setup_env, "recover_container_env", return_value=restored),
+            patch.object(setup_env, "read_env", return_value={}),
+            patch.object(setup_env, "configure", return_value=(restored, False)),
+            patch("builtins.print") as output,
+        ):
+            setup_env.main()
+        printed = str(output.call_args_list)
+        self.assertNotIn(restored["DB_PASSWORD"], printed)
+        self.assertNotIn(restored["AGENT_SECRET"], printed)
+
+    def test_existing_database_with_partial_env_is_not_given_a_new_owner_password(self):
+        with (
+            patch.object(sys, "argv", ["setup_env.py"]),
+            patch.object(
+                setup_env, "existing_database_volume", return_value="old-volume"
+            ),
+            patch.object(setup_env, "read_env", return_value={"DB_NAME": "luregenix"}),
+            patch.object(setup_env, "configure") as configure,
+            patch.object(
+                setup_env.argparse.ArgumentParser, "error", side_effect=ValueError
+            ),
+        ):
+            with self.assertRaises(ValueError):
+                setup_env.main()
+            configure.assert_not_called()
+
+    def test_agent_config_can_select_virtualbox_ip_and_hostname(self):
+        with tempfile.TemporaryDirectory(prefix="luregenix-test-") as directory:
+            source, output = Path(directory) / ".env", Path(directory) / "agent.env"
+            source.write_text("AGENT_SECRET=" + "a" * 48, encoding="utf-8")
+            argv = [
+                "configure_agent.py",
+                "--env",
+                str(source),
+                "--url",
+                "http://192.168.56.10:8080",
+                "--output",
+                str(output),
+                "--node-ip",
+                "192.168.56.11",
+                "--hostname",
+                "lure-node-1",
+            ]
+            with patch.object(sys, "argv", argv):
+                configure_agent.main()
+            values = setup_env.read_env(output)
+            self.assertEqual(values["NODE_IP"], "192.168.56.11")
+            self.assertEqual(values["NODE_HOSTNAME"], "lure-node-1")
+            self.assertNotIn("JWT_SECRET", values)
+            with patch.object(sys, "argv", argv), self.assertRaises(FileExistsError):
+                configure_agent.main()
+
+    def test_agent_hostname_cannot_inject_environment_settings(self):
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "configure_agent.py",
+                    "--url",
+                    "http://localhost:8080",
+                    "--output",
+                    "unused.env",
+                    "--hostname",
+                    "host\nAGENT_SECRET=spoofed",
+                ],
+            ),
+            patch.object(
+                configure_agent.argparse.ArgumentParser, "error", side_effect=ValueError
+            ),
+            patch.object(configure_agent.os, "open") as write,
+        ):
+            with self.assertRaises(ValueError):
+                configure_agent.main()
+            write.assert_not_called()
+
     def test_existing_database_volume_is_discovered(self):
         results = [MagicMock(stdout="container-id\n"), MagicMock(stdout="old-volume\n")]
         with patch.object(setup_env.subprocess, "run", side_effect=results):
@@ -380,7 +565,7 @@ class ConfigurationTests(unittest.TestCase):
                 setup_env.existing_database_volume()
 
     def test_configured_volume_cannot_replace_existing_data(self):
-        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+        with tempfile.TemporaryDirectory(prefix="luregenix-test-") as directory:
             path = Path(directory) / ".env"
             setup_env.configure(path, ROOT / ".env.example", volume="old-volume")
             before = path.read_text()
@@ -391,7 +576,7 @@ class ConfigurationTests(unittest.TestCase):
             self.assertEqual(path.read_text(), before)
 
     def test_secrets_created_once_and_preserved(self):
-        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+        with tempfile.TemporaryDirectory(prefix="luregenix-test-") as directory:
             path = Path(directory) / ".env"
             first, created = setup_env.configure(path, ROOT / ".env.example")
             second, created_again = setup_env.configure(path, ROOT / ".env.example")

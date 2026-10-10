@@ -1,6 +1,7 @@
 """Prepare a private local configuration without executing dotenv as shell code."""
 
 import argparse
+import json
 import os
 import re
 import secrets
@@ -19,9 +20,16 @@ def read_env(path):
     return values
 
 
-def configure(path, example, lan=False, volume=None, local=False):
+def configure(path, example, lan=False, volume=None, local=False, recovered=None):
     values = read_env(example)
-    values.update(read_env(path))
+    values.update(recovered or {})
+    values.update(
+        {
+            key: value
+            for key, value in read_env(path).items()
+            if value or key not in (recovered or {})
+        }
+    )
     for key in (
         "DB_PASSWORD",
         "APP_DB_PASSWORD",
@@ -131,41 +139,201 @@ def existing_database_volume():
     return volume
 
 
+def recover_container_env():
+    """Read credentials from this Compose project's containers, without logging them."""
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "ps",
+                "--all",
+                "--filter",
+                "label=com.docker.compose.project=luregenix",
+                "--format",
+                "{{.ID}}",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        ids = result.stdout.split()
+        if not ids:
+            raise ValueError(
+                "Нет контейнеров LureGenix для восстановления .env. Нужна резервная копия."
+            )
+        result = subprocess.run(
+            ["docker", "inspect", *ids],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        containers = json.loads(result.stdout)
+        if not isinstance(containers, list):
+            raise ValueError("Docker вернул некорректные сведения о контейнерах.")
+    except (
+        FileNotFoundError,
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+    ) as exc:
+        raise ValueError(
+            "Не удалось прочитать контейнеры Docker для восстановления .env."
+        ) from exc
+
+    restored = {}
+    owners = 0
+    app_services = {
+        "auth_service",
+        "honeytoken_service",
+        "event_service",
+        "discovery_service",
+    }
+    settings = {
+        "JWT_SECRET",
+        "AGENT_SECRET",
+        "ADMIN_SECRET",
+        "BOOTSTRAP_ADMIN_USERNAME",
+        "BOOTSTRAP_ADMIN_PASSWORD",
+        "OLLAMA_BASE_URL",
+        "OLLAMA_MODEL",
+        "GENERATION_MODE",
+        "LLM_TIMEOUT_SECONDS",
+        "DISCOVERY_ALLOWED_CIDRS",
+        "EVENT_RETENTION_DAYS",
+    }
+
+    def remember(key, value):
+        if not value:
+            return
+        if key in restored and restored[key] != value:
+            raise ValueError(
+                f"В контейнерах разные значения {key}. Восстановите .env из резервной копии."
+            )
+        restored[key] = value
+
+    for container in containers:
+        config = container.get("Config") or {}
+        labels = config.get("Labels") or {}
+        if labels.get("com.docker.compose.project") != "luregenix":
+            continue
+        service = labels.get("com.docker.compose.service")
+        if service not in app_services | {"postgres", "database_init", "gateway"}:
+            continue
+        env = dict(item.split("=", 1) for item in config.get("Env", []) if "=" in item)
+        if service == "postgres":
+            owners += 1
+            for key, source in {
+                "DB_NAME": "POSTGRES_DB",
+                "DB_USER": "POSTGRES_USER",
+                "DB_PASSWORD": "POSTGRES_PASSWORD",
+            }.items():
+                remember(key, env.get(source))
+        elif service == "database_init":
+            for key in (
+                "DB_NAME",
+                "DB_USER",
+                "DB_PASSWORD",
+                "APP_DB_USER",
+                "APP_DB_PASSWORD",
+            ):
+                remember(key, env.get(key))
+        elif service in app_services:
+            remember("DB_NAME", env.get("DB_NAME"))
+            # Older releases used the owner role; migrate those to a dedicated app role.
+            if env.get("DB_USER", "").startswith("luregenix_"):
+                remember("APP_DB_USER", env["DB_USER"])
+                remember("APP_DB_PASSWORD", env.get("DB_PASSWORD"))
+        for key in settings:
+            remember(key, env.get(key))
+    if owners != 1:
+        raise ValueError(
+            "Для восстановления нужен ровно один контейнер PostgreSQL проекта."
+        )
+    missing = {
+        "DB_NAME",
+        "DB_USER",
+        "DB_PASSWORD",
+        "JWT_SECRET",
+        "AGENT_SECRET",
+    } - restored.keys()
+    if missing:
+        raise ValueError(
+            "В контейнерах отсутствуют настройки: "
+            + ", ".join(sorted(missing))
+            + ". Нужна резервная копия .env."
+        )
+    return restored
+
+
 def main():
     parser = argparse.ArgumentParser()
     network = parser.add_mutually_exclusive_group()
     network.add_argument("--lan", action="store_true")
     network.add_argument("--local", action="store_true")
     parser.add_argument("--volume")
+    parser.add_argument(
+        "--recover-env",
+        action="store_true",
+        help="Восстановить потерянный .env из сохранившихся контейнеров, не изменяя БД",
+    )
     args = parser.parse_args()
     # Keep old anonymous volumes when moving an existing installation to named storage.
     try:
         volume = existing_database_volume()
     except ValueError as exc:
         parser.error(str(exc))
-    if volume and not Path(".env").is_file():
+    if volume and not Path(".env").is_file() and not args.recover_env:
         parser.error(
-            "Restore the existing .env before configuring an existing database"
+            "Есть существующая БД, но нет .env. Восстановите файл из копии или выполните python3 tools/setup_env.py --recover-env."
         )
     if args.volume and volume and args.volume != volume:
         parser.error("The selected volume does not match the existing database")
     try:
+        recovered = recover_container_env() if args.recover_env else None
+        current = read_env(Path(".env"))
+        if recovered:
+            conflicts = [
+                key
+                for key, value in recovered.items()
+                if current.get(key) and current[key] != value
+            ]
+            if conflicts:
+                raise ValueError(
+                    "Настройки .env отличаются от контейнеров: "
+                    + ", ".join(sorted(conflicts))
+                    + ". Файл не изменён."
+                )
+        if (
+            volume
+            and not recovered
+            and any(
+                not current.get(key) for key in ("DB_NAME", "DB_USER", "DB_PASSWORD")
+            )
+        ):
+            raise ValueError(
+                "В .env не заполнены настройки существующей БД. Восстановите их или используйте --recover-env. Новые пароли БД не созданы."
+            )
         values, created = configure(
             Path(".env"),
             Path(".env.example"),
             args.lan,
             volume or args.volume,
             args.local,
+            recovered=recovered,
         )
     except ValueError as exc:
         parser.error(str(exc))
-    print("Configuration ready: .env (private; do not commit or share)")
-    if created:
+    print("Конфигурация готова: .env. Не публикуйте и не передавайте этот файл.")
+    if args.recover_env:
         print(
-            "First-run administrator:", values.get("BOOTSTRAP_ADMIN_USERNAME", "admin")
+            "Настройки восстановлены из контейнеров. Существующая БД и пароли не удалялись."
         )
-        print("First-run password:", values["BOOTSTRAP_ADMIN_PASSWORD"])
-        print("Existing administrators in the database will NOT be reset.")
+    if created:
+        print("Первый администратор:", values.get("BOOTSTRAP_ADMIN_USERNAME", "admin"))
+        print("Пароль первого входа:", values["BOOTSTRAP_ADMIN_PASSWORD"])
+        print("Пароли существующих администраторов НЕ меняются.")
     if args.lan:
         print(
             "HTTP is exposed on the LAN. Use only for a trusted isolated lab; use TLS for other networks."

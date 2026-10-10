@@ -23,7 +23,14 @@ def main():
     parser.add_argument("--directory", default="/opt")
     parser.add_argument("--ca-file")
     parser.add_argument("--api-only", action="store_true")
+    parser.add_argument(
+        "--node-id",
+        type=int,
+        help="ID агента этого Linux-сервера, если его hostname переопределён",
+    )
     args = parser.parse_args()
+    if args.node_id is not None and args.node_id < 1:
+        parser.error("ID сервера должен быть положительным")
     if not args.api_only and sys.platform != "linux":
         parser.error(
             "File monitoring checks must run on the Linux agent host; use --api-only here"
@@ -101,11 +108,17 @@ def main():
     candidates = [
         node
         for node in nodes
-        if node["hostname"] == socket.gethostname() and node["status"] == "online"
+        if (
+            node["id"] == args.node_id
+            if args.node_id is not None
+            else node["hostname"] == socket.gethostname()
+        )
+        and node["status"] == "online"
+        and node.get("enrolled", True)
     ]
     require(
-        bool(candidates),
-        "A local Linux host agent is online (run this check on that host)",
+        len(candidates) == 1,
+        "Ровно один агент этого Linux-сервера в сети; при совпадении hostname укажите --node-id",
     )
     filename = "service-backup-" + uuid.uuid4().hex[:12] + ".key"
     status, job = request(

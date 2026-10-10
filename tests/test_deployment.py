@@ -383,7 +383,7 @@ class ApiTests(unittest.TestCase):
 
 class AgentTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(dir=ROOT)
+        self.temp = tempfile.TemporaryDirectory(prefix="luregenix-test-")
         self.root = Path(self.temp.name)
         self.patches = [
             patch.object(

@@ -2,6 +2,9 @@
 .env
 .env.*
 .venv
+.ruff_cache
+.pytest_cache
+tmp*/
 **/__pycache__
 **/*.pyc
 backups

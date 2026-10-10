@@ -1,5 +1,7 @@
 """Browser regression check against fixture API responses; no running backend required."""
 
+import argparse
+import tempfile
 import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -28,8 +30,20 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def main():
-    output = ROOT / "test-results"
-    output.mkdir(exist_ok=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--screenshots",
+        type=Path,
+        help="Каталог для сохранения снимков; по умолчанию они временные",
+    )
+    args = parser.parse_args()
+    temporary = (
+        tempfile.TemporaryDirectory(prefix="luregenix-browser-")
+        if args.screenshots is None
+        else None
+    )
+    output = args.screenshots if args.screenshots is not None else Path(temporary.name)
+    output.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer(
         ("127.0.0.1", 0), partial(Handler, directory=str(ROOT / "frontend"))
     )
@@ -372,6 +386,8 @@ def main():
         server.shutdown()
         server.server_close()
         thread.join()
+        if temporary:
+            temporary.cleanup()
 
 
 if __name__ == "__main__":

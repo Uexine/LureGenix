@@ -10,4 +10,5 @@ backup.sql
 agent-install.env
 agent-*.env
 .ruff_cache/
+/tmp????????/
 certs/

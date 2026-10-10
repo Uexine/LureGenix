@@ -19,6 +19,11 @@ docker compose ps -a
 `database_init` должен завершиться с кодом 0; остальные сервисы остаются запущенными.
 Настройки и том существующей БД сохраняются; миграции применяются автоматически.
 
+Для изолированного стенда с доступом по IP использовать `--lan` вместо `--local`.
+Если потерян `.env`, но сохранились контейнеры проекта:
+`python3 tools/setup_env.py --recover-env --lan`. При нехватке данных нужна резервная
+копия `.env`; удалять БД для решения этой ошибки нельзя.
+
 ## Linux-Агент
 
 На Linux-хосте, где доступен основной сервер по localhost:8080:
@@ -81,6 +86,7 @@ python3 tools/smoke_test.py
 Тесты кода: `python -m pip install -r requirements-dev.txt` в отдельном venv,
 затем `python -m unittest discover -s tests`.
 Интерфейс: `python tools/verify_dashboard.py` (Playwright и Microsoft Edge).
+Снимки временные; для сохранения добавить `--screenshots test-results`.
 Диагностика: `docker compose logs --tail=100` и
 `sudo journalctl -u luregenix-agent -n 50 --no-pager`.
 

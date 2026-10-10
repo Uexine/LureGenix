@@ -1,6 +1,7 @@
 """Create a protected host-agent config from the project's dotenv file."""
 
 import argparse
+import ipaddress
 import os
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -14,7 +15,21 @@ def main():
     parser.add_argument("--url", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--ca-file", default="")
+    parser.add_argument("--node-ip", default="")
+    parser.add_argument("--hostname", default="")
     args = parser.parse_args()
+    if args.node_ip:
+        try:
+            args.node_ip = str(ipaddress.ip_address(args.node_ip))
+        except ValueError:
+            parser.error("Укажите корректный IP-адрес сервера в --node-ip")
+    if args.hostname and (
+        len(args.hostname) > 253
+        or any(not (c.isascii() and (c.isalnum() or c in "-._")) for c in args.hostname)
+    ):
+        parser.error(
+            "Hostname должен содержать только латинские буквы, цифры, '.', '_' и '-'"
+        )
     url = urlsplit(args.url)
     if (
         url.scheme not in ("http", "https")
@@ -41,6 +56,10 @@ def main():
     fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as config:
         config.write(f"GATEWAY_URL={args.url}\nAGENT_SECRET={secret}\n")
+        if args.node_ip:
+            config.write(f"NODE_IP={args.node_ip}\n")
+        if args.hostname:
+            config.write(f"NODE_HOSTNAME={args.hostname}\n")
         config.write("AGENT_ALLOWED_DIRS=/etc,/var/www,/home,/opt\n")
         config.write("AGENT_AUTO_DIRS=/var/www/html,/var/www,/opt,/home,/etc\n")
         config.write("AGENT_STATE_FILE=/var/lib/luregenix-agent/agent.json\n")
