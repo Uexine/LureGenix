@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LureGenix &#183; Дашборд</title>
+    <meta name="color-scheme" content="light dark">
+    <script src="/js/theme.js"></script>
     <link rel="stylesheet" href="/vendor/fontawesome/css/all.min.css">
     <link rel="stylesheet" href="/css/style.css">
     <link rel="stylesheet" href="/css/dashboard.css">
@@ -49,6 +51,9 @@
                 <p id="pageSubtitle">Отслеживайте активность honeytoken&#39;ов в реальном времени</p>
             </div>
             <div class="user-menu">
+                <button type="button" class="theme-toggle" data-theme-toggle title="Включить тёмную тему" aria-label="Включить тёмную тему" aria-pressed="false">
+                    <i class="fas fa-moon" aria-hidden="true"></i>
+                </button>
                 <button class="btn btn-outline" data-action="passwordDialog" title="Сменить пароль"><i class="fas fa-key"></i></button>
                 <div class="user-profile" data-action="logout" title="Выйти из аккаунта" role="button" tabindex="0">
                     <div class="avatar" id="userAvatar">A</div>
