@@ -1,3 +1,4 @@
+// Проверяет данные входа через API и сохраняет полученную сессию в текущей вкладке.
 async function login(event) {
     event.preventDefault();
     const button = document.getElementById("loginBtn");

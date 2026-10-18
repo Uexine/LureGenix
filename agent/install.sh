@@ -8,6 +8,7 @@ fi
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 config_file="${1:-}"
+# Конфиг читает systemd как данные: shell-команд из него не исполняем.
 if [[ -n "$config_file" ]]; then
     [[ -f "$config_file" ]] || { echo "Файл конфигурации агента не найден" >&2; exit 1; }
     grep -Eq '^AGENT_SECRET=.+$' "$config_file" || { echo "Не задан AGENT_SECRET" >&2; exit 1; }
@@ -17,6 +18,7 @@ command -v python3 >/dev/null
 python3 -c 'import sys; assert sys.version_info >= (3,10), "Нужен Python 3.10 или новее"'
 command -v systemctl >/dev/null
 install -d -m 0755 /opt/luregenix-agent
+# Обновляем код, не удаляя идентичность агента и очередь недоставленных событий.
 install -d -m 0700 /var/lib/luregenix-agent
 install -m 0644 "${script_dir}/agent.py" /opt/luregenix-agent/agent.py
 install -m 0644 "${script_dir}/requirements.txt" /opt/luregenix-agent/requirements.txt
@@ -40,6 +42,7 @@ if [[ -n "$config_file" ]]; then
         exit 1
     fi
     for attempt in {1..30}; do
+        # Старый node_id сам по себе не подтверждает успешную регистрацию после обновления.
         if python3 -c 'import json,sys; data=json.load(open("/var/lib/luregenix-agent/agent.json")); assert data.get("node_id") and data.get("last_registration",0) >= int(sys.argv[1])' "$started_at" 2>/dev/null; then
             printf 'Агент запущен и зарегистрирован в приложении.\n'
             exit 0

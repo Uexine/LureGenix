@@ -1,3 +1,5 @@
+-- Записи приманок. file_path -- путь на Linux-ноде, а не внутри контейнера приложения.
+-- placement сохранён для совместимости с ранее созданными записями.
 CREATE TABLE IF NOT EXISTS honeytoken_files (
     id SERIAL PRIMARY KEY,
     token_type TEXT NOT NULL,

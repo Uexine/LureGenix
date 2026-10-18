@@ -11,6 +11,7 @@ User=root
 Group=root
 UMask=0077
 StateDirectory=luregenix-agent
+StateDirectoryMode=0700
 Restart=on-failure
 RestartSec=10
 NoNewPrivileges=true

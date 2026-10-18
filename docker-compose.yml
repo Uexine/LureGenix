@@ -16,9 +16,9 @@ x-python-service: &python-service
 
 x-database: &database
   DB_HOST: postgres
-  DB_NAME: ${DB_NAME:?Run python3 tools/setup_env.py first}
+  DB_NAME: ${DB_NAME:?Сначала выполните python3 tools/setup_env.py}
   DB_USER: ${APP_DB_USER:-luregenix_app}
-  DB_PASSWORD: ${APP_DB_PASSWORD:?APP_DB_PASSWORD is required}
+  DB_PASSWORD: ${APP_DB_PASSWORD:?Не задан APP_DB_PASSWORD}
 
 x-backend: &backend
   <<: *python-service
@@ -32,7 +32,7 @@ services:
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Не задан DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -67,10 +67,10 @@ services:
     build:
       context: .
       dockerfile: services/Dockerfile
-      args: {SERVICE: auth_service}
+      args: {SERVICE_DIR: services/auth_service}
     environment:
       <<: *database
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_SECRET: ${JWT_SECRET:?Не задан JWT_SECRET}
       ADMIN_SECRET: ${ADMIN_SECRET:-}
       BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
@@ -80,7 +80,7 @@ services:
     build:
       context: .
       dockerfile: services/Dockerfile
-      args: {SERVICE: honeytoken_service}
+      args: {SERVICE_DIR: services/honeytoken_service}
     environment:
       <<: *database
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
@@ -93,7 +93,7 @@ services:
     build:
       context: .
       dockerfile: services/Dockerfile
-      args: {SERVICE: event_service}
+      args: {SERVICE_DIR: services/event_service}
     environment:
       <<: *database
       EVENT_RETENTION_DAYS: ${EVENT_RETENTION_DAYS:-30}
@@ -103,7 +103,7 @@ services:
     build:
       context: .
       dockerfile: services/Dockerfile
-      args: {SERVICE: discovery_service}
+      args: {SERVICE_DIR: services/discovery_service}
     environment:
       <<: *database
       DISCOVERY_ALLOWED_CIDRS: ${DISCOVERY_ALLOWED_CIDRS:-}
@@ -112,7 +112,8 @@ services:
     <<: *python-service
     build:
       context: .
-      dockerfile: gateway/Dockerfile
+      dockerfile: services/Dockerfile
+      args: {SERVICE_DIR: gateway}
     depends_on:
       auth_service: {condition: service_healthy}
       honeytoken_service: {condition: service_healthy}
@@ -121,7 +122,7 @@ services:
     environment:
       JWT_SECRET: ${JWT_SECRET}
       ADMIN_SECRET: ${ADMIN_SECRET:-}
-      AGENT_SECRET: ${AGENT_SECRET:?AGENT_SECRET is required}
+      AGENT_SECRET: ${AGENT_SECRET:?Не задан AGENT_SECRET}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-180}
 
   nginx:

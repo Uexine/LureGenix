@@ -1,4 +1,4 @@
-"""Registered Linux agents and explicitly scoped, read-only TCP discovery."""
+"""Регистрация Linux-агентов и поиск SSH-серверов в разрешённых подсетях."""
 
 import hashlib
 import ipaddress
@@ -23,6 +23,7 @@ scan_lock = threading.Lock()
 
 @app.get("/nodes")
 def nodes():
+    """Возвращает ноды; доступность определяется по heartbeat за последние 150 секунд."""
     with closing(get_db()) as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT id, hostname, ip, CASE WHEN last_heartbeat > now() - interval '150 seconds' THEN 'online' ELSE 'offline' END, last_heartbeat, credential_hash IS NOT NULL FROM nodes ORDER BY id"
@@ -42,6 +43,8 @@ def nodes():
 
 
 class Registration(BaseModel):
+    """Параметры регистрации и последующих heartbeat одного агента."""
+
     hostname: str = Field(min_length=1, max_length=255)
     ip: str
     agent_id: str
@@ -50,6 +53,7 @@ class Registration(BaseModel):
 
 @app.post("/register")
 def register(data: Registration):
+    """Регистрирует новую ноду или обновляет heartbeat владельца существующего ключа."""
     try:
         identity = str(UUID(data.agent_id))
         address = str(ipaddress.ip_address(data.ip))
@@ -57,7 +61,7 @@ def register(data: Registration):
         raise HTTPException(400, "Некорректный идентификатор агента или IP-адрес.")
     digest = hashlib.sha256(data.credential.encode()).hexdigest()
     with closing(get_db()) as conn, conn, conn.cursor() as cur:
-        # Serialise enrollment to prevent simultaneous re-enrollment taking over a node.
+        # Блокировка не даёт двум регистрациям одновременно занять одну ноду.
         cur.execute("SELECT pg_advisory_xact_lock(71024001)")
         cur.execute(
             "SELECT id, credential_hash FROM nodes WHERE agent_id=%s FOR UPDATE",
@@ -105,12 +109,15 @@ def register(data: Registration):
 
 
 class Credential(BaseModel):
+    """Собственный идентификатор и ключ агента, а не общий секрет регистрации."""
+
     agent_id: str = Field(max_length=36)
     credential: str = Field(min_length=32, max_length=256)
 
 
 @app.post("/authenticate")
 def authenticate(data: Credential):
+    """Проверяет хеш ключа агента и возвращает его ноду для проверки прав на шлюзе."""
     with closing(get_db()) as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT id, hostname, credential_hash FROM nodes WHERE agent_id=%s",
@@ -129,10 +136,13 @@ def authenticate(data: Credential):
 
 
 class ScanRequest(BaseModel):
+    """Одна подсеть, которую администратор явно выбрал для поиска серверов."""
+
     subnet: str = Field(max_length=64)
 
 
 def scan_network(value):
+    """Проверяет TCP/22 в разрешённой IPv4-подсети, не подключаясь по SSH."""
     try:
         subnet = ipaddress.ip_network(value, strict=True)
         allowed = [
@@ -158,6 +168,7 @@ def scan_network(value):
     try:
 
         def probe(address):
+            """Проверяет доступность SSH-порта одного адреса без авторизации."""
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as connection:
                 connection.settimeout(0.5)
                 return (
@@ -175,4 +186,5 @@ def scan_network(value):
 
 @app.post("/scan")
 def scan(data: ScanRequest):
+    """Запускает ограниченный поиск серверов по запросу администратора."""
     return scan_network(data.subnet)

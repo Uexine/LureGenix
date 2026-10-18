@@ -2,9 +2,11 @@
 __pycache__/
 *.pyc
 .env
+*.env
 backups/
 backup.sql
 *.env.tmp
+.env.*.tmp
 agent-install.env
 agent-*.env
 .ruff_cache/

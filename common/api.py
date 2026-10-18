@@ -1,4 +1,4 @@
-"""Shared API defaults and safe, user-facing error responses."""
+"""Общие настройки HTTP API и безопасные сообщения об ошибках."""
 
 import logging
 from contextlib import closing
@@ -34,21 +34,29 @@ FIELD_NAMES = {
 
 
 def create_app(*, lifespan=None, database=None):
+    """Создаёт API с русскими ошибками и проверкой БД, если передано подключение."""
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, exc: RequestValidationError):
-        # Validation errors can include submitted credentials; never echo their input.
+        """Указывает ошибочные поля, не возвращая введённые пароли и ключи."""
         fields = dict.fromkeys(
-            FIELD_NAMES.get(str(error["loc"][-1]), "данные запроса")
+            next(
+                (
+                    FIELD_NAMES[part]
+                    for part in error.get("loc", ())
+                    if part in FIELD_NAMES
+                ),
+                "данные запроса",
+            )
             for error in exc.errors()
-            if error.get("loc")
         )
         detail = "Проверьте поля: " + ", ".join(fields) + "."
         return JSONResponse(status_code=422, content={"detail": detail})
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
+        """Сохраняет HTTP-статус и переводит стандартные ошибки маршрутизации."""
         detail = (
             {
                 "Not Found": "Адрес не найден.",
@@ -63,6 +71,7 @@ def create_app(*, lifespan=None, database=None):
 
     @app.exception_handler(Exception)
     async def internal_error(request: Request, exc: Exception):
+        """Скрывает внутренние сведения об исключении от клиента."""
         logger.error("Unhandled request error (%s)", type(exc).__name__)
         return JSONResponse(
             status_code=500,
@@ -76,12 +85,14 @@ def create_app(*, lifespan=None, database=None):
 
         @app.get("/health")
         def health():
+            """Проверяет не только процесс сервиса, но и доступность PostgreSQL."""
             with closing(database()) as conn, conn.cursor() as cur:
                 cur.execute("SELECT 1")
             return {"status": "ok"}
 
         @app.exception_handler(psycopg2.Error)
         async def database_error(request: Request, exc: psycopg2.Error):
+            """Возвращает 503 при сбое БД, не раскрывая SQL и реквизиты соединения."""
             logger.error("Database request failed (%s)", type(exc).__name__)
             return JSONResponse(
                 status_code=503,

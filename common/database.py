@@ -5,6 +5,7 @@ import psycopg2
 
 
 def connect():
+    """Открывает соединение с БД от имени роли текущего сервиса."""
     return psycopg2.connect(
         host=os.getenv("DB_HOST", "postgres"),
         database=os.getenv("DB_NAME", "luregenix"),
@@ -15,9 +16,13 @@ def connect():
 
 
 def utc_timestamp(value):
+    """Преобразует дату в ISO 8601 UTC, остальные значения оставляет как есть."""
     if not isinstance(value, datetime):
         return value
-    # Old TIMESTAMP columns contain UTC even though PostgreSQL returns naive values.
+    # Старые столбцы TIMESTAMP хранят UTC, но драйвер возвращает дату без часового пояса.
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat()
+
+
+"""Подключение к PostgreSQL и единый формат времени для API."""

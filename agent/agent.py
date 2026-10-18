@@ -1,4 +1,4 @@
-"""Host-installed Linux agent: deployment tasks, inotify monitoring, durable delivery."""
+"""Linux-агент: размещение файлов, наблюдение inotify и доставка событий из журнала."""
 
 import base64
 import errno
@@ -72,6 +72,7 @@ DENIED_PATHS = (
 
 
 def allowed_path(path):
+    """Проверяет разрешённые корни и исключает пути, способные изменить работу ОС."""
     resolved = os.path.realpath(path)
     if any(
         resolved == denied or resolved.startswith(denied + "/")
@@ -103,6 +104,7 @@ def allowed_path(path):
 
 
 def target_file(task):
+    """Выбирает конечный путь в существующем каталоге, вручную или автоматически."""
     filename = task["filename"]
     if filename in ("", ".", "..") or any(c in filename for c in "/\\\x00\r\n"):
         raise ValueError("Некорректное имя файла.")
@@ -137,7 +139,8 @@ def target_file(task):
 
 
 def open_directory(path):
-    # Walk using directory descriptors so a symlink swap cannot redirect a privileged write.
+    """Открывает каталог по компонентам, запрещая переход через символьные ссылки."""
+    # Дескрипторы каталогов защищают запись от подмены ссылки между проверкой и открытием.
     descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
         for component in Path(path).parts[1:]:
@@ -155,6 +158,7 @@ def open_directory(path):
 
 
 def write_file(path, payload, token_id):
+    """Создаёт новый файл без перезаписи, сохраняет метку приманки и безопасные права."""
     directory = open_directory(os.path.dirname(path))
     try:
         descriptor = os.open(
@@ -176,6 +180,7 @@ def write_file(path, payload, token_id):
 
 
 def owned_file(path, token_id):
+    """Отличает собственную приманку от чужого файла при восстановлении после сбоя."""
     try:
         return (
             stat.S_ISREG(os.lstat(path).st_mode)
@@ -189,6 +194,7 @@ def owned_file(path, token_id):
 
 
 def discover_ip():
+    """Берёт заданный IP или определяет исходящий адрес по маршруту к шлюзу."""
     if NODE_IP:
         return NODE_IP
     parsed = urlsplit(GATEWAY_URL)
@@ -199,7 +205,7 @@ def discover_ip():
         address = connection.getsockname()[0]
         if address.startswith("127."):
             try:
-                # Route selection only: no datagrams are sent to this documentation address.
+                # connect у UDP выбирает маршрут, но не отправляет пакеты на этот адрес.
                 connection.connect(("192.0.2.1", 9))
                 address = connection.getsockname()[0]
             except OSError:
@@ -208,6 +214,7 @@ def discover_ip():
 
 
 def deployment_error(exc):
+    """Переводит ошибки файловой системы в понятный текст для веб-интерфейса."""
     if isinstance(exc, FileExistsError):
         return "Файл уже существует. Выберите другое имя файла."
     if isinstance(exc, OSError):
@@ -228,14 +235,17 @@ def deployment_error(exc):
 
 
 class Agent:
+    """Хранит идентичность, задания и очередь событий независимо от доступности сервера."""
+
     def __init__(self, monitor):
+        """Загружает локальный журнал и восстанавливает наблюдение за размещёнными файлами."""
         self.monitor = monitor
         self.node_id = None
         self.session = requests.Session()
         self.session.verify = os.getenv("AGENT_CA_FILE") or True
         self.state = {"tasks": {}, "events": []}
         if STATE_FILE.exists():
-            # Stop on a corrupt journal rather than risk duplicating deployment.
+            # Повреждённый журнал не сбрасываем: иначе можно потерять очередь и повторить запись.
             self.state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
         self.state.setdefault("agent_id", str(uuid.uuid4()))
         self.state.setdefault("credential", secrets.token_urlsafe(48))
@@ -260,10 +270,11 @@ class Agent:
                     self.watch(record["token_id"], record["path"])
                 except (OSError, ValueError) as exc:
                     logger.warning(
-                        "Could not restore monitoring for %s: %s", record["path"], exc
+                        "Не удалось восстановить мониторинг %s: %s", record["path"], exc
                     )
 
     def persist(self):
+        """Атомарно сохраняет журнал и синхронизирует его с диском перед сетевыми операциями."""
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         temporary = STATE_FILE.with_suffix(".tmp")
         descriptor = os.open(
@@ -282,6 +293,7 @@ class Agent:
                 os.close(directory)
 
     def request(self, method, path, **kwargs):
+        """Обращается к API со своим ключом агента и обязательной проверкой TLS-сертификата."""
         response = self.session.request(
             method, f"{GATEWAY_URL}/api/{path}", timeout=10, **kwargs
         )
@@ -289,6 +301,7 @@ class Agent:
         return response.json()
 
     def register(self):
+        """Регистрирует ноду или обновляет её heartbeat, сохраняя подтверждённое время связи."""
         result = self.request(
             "POST",
             "register",
@@ -306,6 +319,7 @@ class Agent:
         self.persist()
 
     def queue_event(self, token_id, action, path=""):
+        """Записывает событие с UUID и временем обнаружения до первой попытки доставки."""
         self.state["events"].append(
             {
                 "event_id": str(uuid.uuid4()),
@@ -319,6 +333,7 @@ class Agent:
         self.persist()
 
     def flush_events(self):
+        """Доставляет очередь; временные сбои не удаляют события, отклонённые сохраняются отдельно."""
         deadline = time.monotonic() + 2
         while self.state["events"] and time.monotonic() < deadline:
             if "event_id" not in self.state["events"][0]:
@@ -342,7 +357,7 @@ class Agent:
                 self.state["rejected_events"] = rejected[-100:]
                 self.persist()
                 logger.error(
-                    "Rejected event preserved in the local journal (HTTP %s)",
+                    "Отклонённое событие сохранено в локальном журнале (HTTP %s)",
                     exc.response.status_code,
                 )
                 continue
@@ -352,12 +367,13 @@ class Agent:
             self.persist()
 
     def watch(self, token_id, path):
+        """Наблюдает за родительским каталогом, чтобы видеть удаление и замену файла."""
         from inotify_simple import flags
 
         if not allowed_path(path):
             raise ValueError("Путь мониторинга не входит в список AGENT_ALLOWED_DIRS.")
         parent = os.path.dirname(path)
-        for descriptor, entry in self.watches.items():
+        for entry in self.watches.values():
             if entry["parent"] == parent:
                 entry["files"][os.path.basename(path)] = token_id
                 return
@@ -383,6 +399,7 @@ class Agent:
         }
 
     def deploy(self, task):
+        """Проверяет содержимое и размещает файл один раз на попытку, используя журнал восстановления."""
         key = task["token_id"]
         record = self.state["tasks"].get(key)
         if (
@@ -415,7 +432,7 @@ class Agent:
                     raise FileExistsError(
                         "Файл уже существует. Выберите другое имя файла."
                     )
-                # Recovery after a crash between write and acknowledgement. Verify before watching.
+                # После сбоя файл мог записаться без подтверждения серверу: сверяем владельца и хеш.
                 with os.fdopen(
                     os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb"
                 ) as stream:
@@ -429,7 +446,7 @@ class Agent:
             self.watch(task["token_id"], path)
             record.update(status="deployed", error="")
         except Exception as exc:
-            logger.warning("Deployment failed for %s (%s)", key, type(exc).__name__)
+            logger.warning("Размещение %s не выполнено (%s)", key, type(exc).__name__)
             record = {
                 "status": "failed",
                 "path": record["path"] if record else "",
@@ -442,6 +459,7 @@ class Agent:
         return record
 
     def poll_tasks(self):
+        """Получает задания своей ноды и восстанавливает наблюдение за готовыми приманками."""
         tasks = self.request("GET", "agent/tasks", params={"node_id": self.node_id})
         for task in tasks:
             if task["status"] == "deployed":
@@ -450,6 +468,7 @@ class Agent:
                 self.report_deployment(task, self.deploy(task))
 
     def restore_monitor(self, task):
+        """Восстанавливает наблюдение без повторной записи и сообщает об ошибке один раз."""
         key = task["token_id"]
         try:
             self.watch(key, task["deployed_path"])
@@ -466,9 +485,10 @@ class Agent:
             if key not in self.monitor_failures:
                 self.queue_event(key, "monitor_error", task["deployed_path"])
                 self.monitor_failures.add(key)
-            logger.warning("Monitoring failed for %s: %s", task["deployed_path"], exc)
+            logger.warning("Ошибка мониторинга %s: %s", task["deployed_path"], exc)
 
     def report_deployment(self, task, record):
+        """Подтверждает результат серверу и добавляет уведомление о размещении в локальную очередь."""
         result = self.request(
             "PUT",
             f"agent/tasks/{task['id']}/result",
@@ -484,17 +504,17 @@ class Agent:
         )
         if result.get("status") != "ok":
             raise RuntimeError("Результат размещения не сохранён сервером.")
-        # A lost HTTP acknowledgement must not cause the file to be written again.
+        # Событие и отметку announced сохраняем вместе, чтобы сбой между записями не дал дубль.
         if not record.get("announced"):
+            record["announced"] = True
             self.queue_event(
                 task["token_id"],
                 "deployed" if record["status"] == "deployed" else "deployment_failed",
                 record["path"],
             )
-            record["announced"] = True
-            self.persist()
 
     def monitor_events(self, timeout=1000):
+        """Сводит события inotify в действия над приманками и подавляет повторы в течение 2 секунд."""
         from inotify_simple import flags
 
         batch = {}
@@ -553,6 +573,7 @@ class Agent:
 
 
 def main():
+    """Запускает единственный экземпляр агента и чередует heartbeat, задания и доставку событий."""
     if sys.platform != "linux":
         raise SystemExit("Запускайте агент непосредственно на целевом Linux-сервере.")
     if len(AGENT_SECRET) < 32:
@@ -580,7 +601,7 @@ def main():
     from inotify_simple import INotify
 
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    # One writer per journal; duplicate processes must not deploy the same task.
+    # Один журнал обслуживает только один процесс, иначе возможно повторное размещение.
     with open(STATE_FILE.with_suffix(".lock"), "w") as lock, INotify() as monitor:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         agent = Agent(monitor)
@@ -592,20 +613,20 @@ def main():
                     agent.register()
                     heartbeat_at = now + HEARTBEAT_INTERVAL
                 except Exception as exc:
-                    logger.warning("Registration/heartbeat failed: %s", exc)
+                    logger.warning("Ошибка регистрации или heartbeat: %s", exc)
                     heartbeat_at = now + 10
             if agent.node_id and now >= poll_at:
                 try:
                     agent.poll_tasks()
                 except Exception as exc:
-                    logger.warning("Task poll failed: %s", exc)
+                    logger.warning("Ошибка получения заданий: %s", exc)
                 poll_at = now + TASK_POLL_INTERVAL
             agent.monitor_events()
             if time.monotonic() >= delivery_at:
                 try:
                     agent.flush_events()
                 except Exception as exc:
-                    logger.warning("Event delivery failed: %s", exc)
+                    logger.warning("Ошибка доставки событий: %s", exc)
                 delivery_at = time.monotonic() + 5
 
 

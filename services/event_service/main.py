@@ -1,4 +1,4 @@
-"""Transactional, idempotent security-event storage and live notifications."""
+"""Хранение событий безопасности, подтверждение тревог и доставка уведомлений."""
 
 import asyncio
 import json
@@ -26,6 +26,7 @@ from common.database import utc_timestamp
 
 @asynccontextmanager
 async def lifespan(app):
+    """Запускает очистку старых событий и останавливает её вместе с сервисом."""
     await run_in_threadpool(cleanup_old_events)
     task = asyncio.create_task(retention_loop())
     try:
@@ -42,30 +43,29 @@ ws_subscribers = []
 EVENT_RETENTION_DAYS = int(os.getenv("EVENT_RETENTION_DAYS", "30"))
 
 
+EVENT_FIELDS = (
+    "id",
+    "token_id",
+    "action",
+    "file_path",
+    "created_at",
+    "source_hostname",
+    "read_at",
+    "event_id",
+    "node_id",
+    "observed_at",
+)
+FIELDS = ",".join(EVENT_FIELDS)
+
+
 def event_row(row):
-    return dict(
-        zip(
-            (
-                "id",
-                "token_id",
-                "action",
-                "file_path",
-                "created_at",
-                "source_hostname",
-                "read_at",
-                "event_id",
-                "node_id",
-                "observed_at",
-            ),
-            [utc_timestamp(value) for value in row],
-        )
-    )
-
-
-FIELDS = "id,token_id,action,file_path,created_at,source_hostname,read_at,event_id,node_id,observed_at"
+    """Собирает ответ API из строки БД, приводя даты к UTC."""
+    return dict(zip(EVENT_FIELDS, map(utc_timestamp, row)))
 
 
 class Event(BaseModel):
+    """Событие агента с UUID для защиты от повторной доставки."""
+
     event_id: UUID
     node_id: int = Field(gt=0)
     token_id: str = Field(min_length=1, max_length=100)
@@ -85,6 +85,7 @@ class Event(BaseModel):
 
 @app.post("/event")
 def add_event(data: Event, background_tasks: BackgroundTasks):
+    """Сохраняет событие и состояние приманки одной транзакцией, повторы не дублирует."""
     try:
         with closing(get_db()) as conn, conn, conn.cursor() as cur:
             if not (
@@ -147,6 +148,7 @@ def add_event(data: Event, background_tasks: BackgroundTasks):
 
 
 async def broadcast_event(event):
+    """Рассылает изменение подключённым клиентам и исключает недоступные соединения."""
     for subscriber in list(ws_subscribers):
         try:
             await asyncio.wait_for(subscriber.send_text(json.dumps(event)), timeout=2)
@@ -157,6 +159,7 @@ async def broadcast_event(event):
 
 @app.get("/events")
 def events():
+    """Возвращает последние 500 событий без служебных heartbeat старых агентов."""
     with closing(get_db()) as conn, conn.cursor() as cur:
         cur.execute(
             f"SELECT {FIELDS} FROM event_log WHERE action <> 'heartbeat' ORDER BY id DESC LIMIT 500"
@@ -166,6 +169,7 @@ def events():
 
 @app.get("/events/unread_count")
 def events_unread_count():
+    """Считает неподтверждённые тревоги для индикатора в интерфейсе."""
     with closing(get_db()) as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT count(*) FROM event_log WHERE read_at IS NULL AND action IN ('open','access','modify','delete','monitor_error','deployment_failed')"
@@ -175,6 +179,7 @@ def events_unread_count():
 
 @app.put("/events/{event_id}/read")
 def event_mark_read(event_id: int):
+    """Подтверждает событие, сохраняя время первого подтверждения."""
     with closing(get_db()) as conn, conn, conn.cursor() as cur:
         cur.execute(
             "UPDATE event_log SET read_at=COALESCE(read_at,now()) WHERE id=%s RETURNING id",
@@ -187,18 +192,22 @@ def event_mark_read(event_id: int):
 
 @app.put("/events/read_all")
 def events_mark_all_read():
+    """Подтверждает все ещё не прочитанные события."""
     with closing(get_db()) as conn, conn, conn.cursor() as cur:
         cur.execute("UPDATE event_log SET read_at=now() WHERE read_at IS NULL")
     return {"status": "ok"}
 
 
 class DeleteEvents(BaseModel):
+    """Разрешает либо выбранные ID, либо явную очистку всего журнала."""
+
     model_config = ConfigDict(extra="forbid")
     ids: list[PositiveInt] = Field(default_factory=list, max_length=500)
     clear_all: bool = False
 
     @model_validator(mode="after")
     def explicit_selection(self):
+        """Не допускает пустой или неоднозначный запрос на удаление."""
         if self.clear_all == bool(self.ids):
             raise ValueError("Выберите события или явно укажите очистку всего журнала.")
         return self
@@ -206,9 +215,10 @@ class DeleteEvents(BaseModel):
 
 @app.delete("/events")
 def delete_events(data: DeleteEvents, background_tasks: BackgroundTasks):
+    """Удаляет записи журнала, не затрагивая приманки и их мониторинг."""
     try:
         with closing(get_db()) as conn, conn, conn.cursor() as cur:
-            # Preserve the ID sequence and token integrity; clear only the journal.
+            # Последовательность ID не сбрасывается: интерфейс использует её как курсор.
             if data.clear_all:
                 cur.execute("DELETE FROM event_log")
             else:
@@ -225,6 +235,7 @@ def delete_events(data: DeleteEvents, background_tasks: BackgroundTasks):
 
 
 def cleanup_old_events():
+    """Удаляет события старше срока хранения; значение 0 отключает очистку."""
     if EVENT_RETENTION_DAYS > 0:
         try:
             with closing(get_db()) as conn, conn, conn.cursor() as cur:
@@ -237,6 +248,7 @@ def cleanup_old_events():
 
 
 async def retention_loop():
+    """Повторяет очистку раз в час, не блокируя цикл WebSocket-соединений."""
     while True:
         await asyncio.sleep(3600)
         await run_in_threadpool(cleanup_old_events)
@@ -244,6 +256,7 @@ async def retention_loop():
 
 @app.websocket("/ws/events")
 async def websocket_events(websocket: WebSocket):
+    """Держит канал уведомлений для шлюза до отключения клиента."""
     await websocket.accept()
     ws_subscribers.append(websocket)
     try:

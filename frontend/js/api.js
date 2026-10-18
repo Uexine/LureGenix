@@ -1,19 +1,21 @@
+// Сессия хранится в текущей вкладке и не переносится в постоянное хранилище браузера.
 function getToken() {
     return sessionStorage.getItem("token");
 }
 
+// Имя пользователя для шапки интерфейса; на права доступа оно не влияет.
 function getUsername() {
     return sessionStorage.getItem("username") || "Администратор";
 }
 
+// Удаляет локальную сессию при выходе или истечении JWT.
 function clearAuth() {
     sessionStorage.removeItem("token");
     sessionStorage.removeItem("username");
 }
 
-function userError(message, fallback = "Не удалось выполнить действие. Повторите попытку.") {
-    if (typeof message !== "string") return fallback;
-    const translations = {
+// Старые ошибки могли сохраниться в БД ещё до перевода агента на русский язык.
+const LEGACY_ERRORS = {
         "File already exists; choose a different filename": "Файл уже существует. Выберите другое имя файла.",
         "Previously deployed file has changed; refusing to overwrite": "Ранее размещённый файл изменён. Перезапись запрещена.",
         "Invalid filename": "Некорректное имя файла.",
@@ -44,26 +46,35 @@ function userError(message, fallback = "Не удалось выполнить �
         "Event not found": "Событие не найдено.",
         "Event storage unavailable": "Хранилище событий временно недоступно.",
         "Forbidden": "Недостаточно прав для выполнения действия.",
-    };
-    if (Object.hasOwn(translations, message)) return translations[message];
+};
+const VALIDATION_FIELDS = {
+    node_id: "сервер", type: "тип приманки", name: "название", filename: "имя файла",
+    node_path: "каталог", target_kind: "тип пути", generation_mode: "режим генерации",
+    ids: "выбранные события", clear_all: "очистка журнала", subnet: "подсеть",
+};
+
+// Показывает понятную ошибку вместо внутренних англоязычных сообщений сервиса или ОС.
+function userError(message, fallback = "Не удалось выполнить действие. Повторите попытку.") {
+    if (typeof message !== "string") return fallback;
+    if (Object.hasOwn(LEGACY_ERRORS, message)) return LEGACY_ERRORS[message];
     if (/Permission denied|Operation not permitted/.test(message)) return "Недостаточно прав для доступа к файлу или каталогу.";
     if (/No such file or directory/.test(message)) return "Файл или каталог не найден.";
     if (/No space left on device/.test(message)) return "На сервере закончилось свободное место.";
     if (/Read-only file system/.test(message)) return "Файловая система доступна только для чтения.";
-    // Older agents and validation libraries may still return English diagnostics.
     return /^[А-Яа-яЁё]/.test(message) ? message : fallback;
 }
 
+// Извлекает сообщение API, включая ответы старых версий сервиса с массивом ошибок полей.
 function apiError(result, fallback = "Ошибка сервера") {
     let detail = result.data && result.data.detail;
     if (detail && typeof detail === "object" && !Array.isArray(detail)) detail = detail.detail;
     if (Array.isArray(detail)) return "Проверьте заполнение полей: " + [...new Set(detail.map(item => {
-        const fields = {node_id: "сервер", type: "тип приманки", name: "название", filename: "имя файла", node_path: "каталог", target_kind: "тип пути", generation_mode: "режим генерации", ids: "выбранные события", clear_all: "очистка журнала", subnet: "подсеть"};
-        return fields[(item.loc || [])[1]] || "данные запроса";
+        return VALIDATION_FIELDS[(item.loc || [])[1]] || "данные запроса";
     }))].join(", ") + ".";
     return userError(detail, fallback);
 }
 
+// Выполняет авторизованный запрос, ограничивает ожидание и обрабатывает завершение сессии.
 async function api(path, {method = "GET", body} = {}) {
     const token = getToken();
     if (!token) {
@@ -74,6 +85,9 @@ async function api(path, {method = "GET", body} = {}) {
         method,
         headers: {"Content-Type": "application/json", "Authorization": "Bearer " + token},
     };
+    const controller = new AbortController();
+    options.signal = controller.signal;
+    const timeout = setTimeout(() => controller.abort(), path === "generate" ? 300000 : 20000);
     if (body !== undefined && method !== "GET") options.body = JSON.stringify(body);
     try {
         const response = await fetch("/api/" + path.replace(/^\/+/, ""), options);
@@ -82,27 +96,37 @@ async function api(path, {method = "GET", body} = {}) {
             window.location.href = "/";
             return {ok: false, status: 401};
         }
-        const data = await response.json().catch(() => ({detail: "Неверный ответ сервера"}));
+        let data;
+        try {
+            data = await response.json();
+        } catch {
+            return {ok: false, data: {detail: "Сервер вернул некорректный ответ"}, status: 502};
+        }
         return {ok: response.ok, data, status: response.status};
-    } catch {
-        return {ok: false, data: {detail: "Нет соединения с сервером"}, status: 0};
+    } catch (error) {
+        const detail = error.name === "AbortError" ? "Сервер не ответил вовремя. Повторите попытку." : "Нет соединения с сервером";
+        return {ok: false, data: {detail}, status: 0};
+    } finally {
+        clearTimeout(timeout);
     }
 }
 
 const pendingGets = new Map();
 
+// Объединяет одновременные GET-запросы разных разделов и WebSocket-обновлений.
 function apiGet(path) {
-    // Views and socket updates can request the same data at the same time.
     if (!pendingGets.has(path)) {
         pendingGets.set(path, api(path).finally(() => pendingGets.delete(path)));
     }
     return pendingGets.get(path);
 }
 
+// Отправляет команду API с JSON-данными.
 function apiPost(path, body) {
     return api(path, {method: "POST", body});
 }
 
+// Обновляет состояние объекта API, например подтверждение события или пароль.
 function apiPut(path, body = {}) {
     return api(path, {method: "PUT", body});
 }

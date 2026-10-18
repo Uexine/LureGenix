@@ -1,4 +1,4 @@
-"""Create a protected host-agent config from the project's dotenv file."""
+"""Создание отдельной конфигурации агента без паролей БД и JWT-секрета приложения."""
 
 import argparse
 import ipaddress
@@ -10,6 +10,7 @@ from setup_env import read_env
 
 
 def main():
+    """Проверяет адрес ноды и создаёт новый конфиг из разрешённых настроек агента."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", default=".env")
     parser.add_argument("--url", required=True)
@@ -30,7 +31,11 @@ def main():
         parser.error(
             "Hostname должен содержать только латинские буквы, цифры, '.', '_' и '-'"
         )
-    url = urlsplit(args.url)
+    try:
+        url = urlsplit(args.url)
+        _ = url.port
+    except ValueError:
+        parser.error("Укажите корректный HTTP(S)-адрес и порт сервера.")
     if (
         url.scheme not in ("http", "https")
         or not url.hostname
@@ -38,6 +43,7 @@ def main():
         or url.password
         or url.query
         or url.fragment
+        or any(c.isspace() or ord(c) < 32 for c in args.url)
     ):
         parser.error(
             "Укажите HTTP(S)-адрес без логина, пароля, параметров запроса и фрагмента."

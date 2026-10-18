@@ -1,15 +1,17 @@
-.git
-.env
-.env.*
-.venv
-.ruff_cache
-**/__pycache__
-**/*.pyc
-backups
-backup.sql
-db
-certs
-frontend
-agent
-tools
-*.md
+# В сборку передаём только исходники Python-сервисов и их зависимости.
+# Конфигурации агентов, .env, ключи TLS и локальные артефакты остаются на хосте.
+**
+!common/
+common/*
+!common/*.py
+!services/
+services/*
+!services/Dockerfile
+!services/*_service/
+services/*_service/*
+!services/*_service/*.py
+!services/*_service/requirements.txt
+!gateway/
+gateway/*
+!gateway/main.py
+!gateway/requirements.txt

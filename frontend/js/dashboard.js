@@ -15,7 +15,26 @@
     const validSectionIds = Object.keys(sections);
     const alertActions = ["alert", "compromise", "open", "access", "modify", "delete", "monitor_error", "deployment_failed"];
     let nodesData = [];
+    let tokensData = [];
+    let generationStatus = null;
+    let tokensSort = {field: "created_at", dir: -1};
+    let tokensFilter = {type: "", search: ""};
+    let highlightedToken = "";
+    let highlightUntil = 0;
+    let highlightTimer = null;
+    let scrollToToken = false;
+    let eventsLoading = false;
+    let eventsRefreshQueued = false;
+    let eventsInitialized = false;
+    let latestEventId = 0;
+    const selectedEventIds = new Set();
+    let visibleEventIds = [];
+    let eventsDeleting = false;
+    let wsReconnectCount = 0;
+    let wsReconnectTimer = null;
+    const refreshTimers = [];
 
+    // Восстанавливает открытый раздел после перезагрузки страницы или перехода назад.
     function getSectionFromPath() {
         var path = (window.location.pathname || "").replace(/\/$/, "");
         if (path === "/dashboard" || path === "") return "dashboard";
@@ -24,6 +43,7 @@
         return validSectionIds.indexOf(id) >= 0 ? id : "dashboard";
     }
 
+    // Сохраняет раздел и выбранную приманку в адресе без перезагрузки приложения.
     function updateUrlForSection(id, replace, tokenId) {
         var path = "/dashboard" + (id === "dashboard" ? "" : "/" + id);
         if (id === "tokens" && tokenId) path += "?token=" + encodeURIComponent(tokenId);
@@ -34,7 +54,10 @@
         }
     }
 
-    document.addEventListener("DOMContentLoaded", function () {
+    document.addEventListener("DOMContentLoaded", initializeDashboard);
+
+    // Связывает действия интерфейса, восстанавливает маршрут и запускает обновление данных.
+    function initializeDashboard() {
         const actions = {toggleSidebar: toggleSidebar, logout: logout,
             generateToken: generateToken, loadNodes: loadNodes, loadTokens: loadTokens,
             loadEvents: loadEvents, loadNetworkMap: loadNetworkMap, markAllEventsRead: markAllEventsRead,
@@ -66,27 +89,7 @@
             if (event.target.checked) selectedEventIds.add(id); else selectedEventIds.delete(id);
             updateEventSelection();
         });
-        document.getElementById("passwordForm").addEventListener("submit", async function (event) {
-            event.preventDefault();
-            var form = event.target;
-            var password = document.getElementById("newPassword").value;
-            if (password !== document.getElementById("confirmPassword").value) {
-                showNotification("Пароли не совпадают", "error");
-                return;
-            }
-            var button = form.querySelector("[type='submit']");
-            button.disabled = true;
-            try {
-                var result = await apiPut("password", {current_password: document.getElementById("currentPassword").value, new_password: password});
-                if (result.ok) {
-                    form.reset();
-                    document.getElementById("passwordDialog").close();
-                    showNotification("Пароль изменён", "success");
-                } else {
-                    showNotification(apiError(result, "Не удалось изменить пароль"), "error");
-                }
-            } finally { button.disabled = false; }
-        });
+        document.getElementById("passwordForm").addEventListener("submit", changePassword);
         document.querySelector("[data-action='logout']").addEventListener("keydown", function (event) {
             if (event.key === "Enter" || event.key === " ") { event.preventDefault(); logout(); }
         });
@@ -133,8 +136,42 @@
         document.getElementById("deploymentMode").addEventListener("change", function () {
             document.getElementById("tokenNodePath").disabled = this.value === "auto";
         });
-    });
+        refreshTimers.push(setInterval(function () {
+            loadNodes();
+            loadTokens();
+        }, 30000));
+        refreshTimers.push(setInterval(loadEvents, 5000));
+    }
 
+    // Проверяет подтверждение нового пароля и передаёт смену пароля серверу.
+    async function changePassword(event) {
+        event.preventDefault();
+        const form = event.target;
+        const password = document.getElementById("newPassword").value;
+        if (password !== document.getElementById("confirmPassword").value) {
+            showNotification("Пароли не совпадают", "error");
+            return;
+        }
+        const button = form.querySelector("[type='submit']");
+        button.disabled = true;
+        try {
+            const result = await apiPut("password", {
+                current_password: document.getElementById("currentPassword").value,
+                new_password: password,
+            });
+            if (result.ok) {
+                form.reset();
+                document.getElementById("passwordDialog").close();
+                showNotification("Пароль изменён", "success");
+            } else {
+                showNotification(apiError(result, "Не удалось изменить пароль"), "error");
+            }
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    // Ключи и пароли создаются локально; выбор шаблона или LLM относится только к содержимому файлов.
     function updateGenerationControls() {
         const local = ["ssh_key", "api_key", "password"].includes(document.getElementById("typeSelect").value);
         document.getElementById("generationMode").disabled = local;
@@ -142,7 +179,7 @@
         else renderGenerationStatus();
     }
 
-    var generationStatus = null;
+    // Показывает состояние выбранного генератора, не меняя выбор пользователя.
     function renderGenerationStatus() {
         if (document.getElementById("generationMode").disabled) return;
         var label = document.getElementById("generatorStatus");
@@ -151,6 +188,7 @@
             "LLM: " + generationStatus.model + (generationStatus.llm_ready ? " · готова" : " · недоступна");
     }
 
+    // Обновляет доступность локальной модели без запуска её скачивания.
     async function loadGenerationStatus() {
         renderGenerationStatus();
         var result = await apiGet("generation-status");
@@ -158,6 +196,7 @@
         renderGenerationStatus();
     }
 
+    // Запрашивает поиск SSH-серверов; подключение и установка агента остаются ручными.
     async function scanNetwork() {
         var button = document.getElementById("btnScan");
         var status = document.getElementById("scanStatus");
@@ -177,12 +216,14 @@
         }
     }
 
+    // Повторяет только неудачное размещение выбранной приманки.
     async function retryToken(tokenId) {
         var result = await api("tokens/" + encodeURIComponent(tokenId) + "/retry", {method: "POST", body: {}});
         showNotification(result.ok ? "Размещение поставлено в очередь повторно" : apiError(result, "Повторное размещение недоступно"), result.ok ? "success" : "error");
         loadTokens();
     }
 
+    // Заполняет типы приманок из справочника сервиса генерации.
     async function loadTokenTypes() {
         const select = document.getElementById("typeSelect");
         if (!select) return;
@@ -199,6 +240,7 @@
         updateGenerationControls();
     }
 
+    // Переключает видимый раздел и обновляет заголовок страницы.
     function showSection(id) {
         if (validSectionIds.indexOf(id) < 0) id = "dashboard";
         document.querySelectorAll(".section-content").forEach(function (el) {
@@ -216,6 +258,7 @@
         if (id === "events") loadEvents();
     }
 
+    // Обновляет ноды, индикатор доступности и выбор сервера, сохраняя текущий выбор.
     async function loadNodes() {
         const res = await apiGet("nodes");
         if (res.status === 401) return;
@@ -246,20 +289,14 @@
         }).join("");
     }
 
-    var tokensData = [];
-    var tokensSort = { field: "created_at", dir: -1 };
-    var tokensFilter = { type: "", search: "" };
-    var highlightedToken = "";
-    var highlightUntil = 0;
-    var highlightTimer = null;
-    var scrollToToken = false;
-
+    // Открывает список приманок по ссылке с карты и запоминает выбранный UUID в адресе.
     async function openToken(tokenId) {
         updateUrlForSection("tokens", false, tokenId);
         showSection("tokens");
         await focusToken(tokenId);
     }
 
+    // Снимает фильтры и на пять секунд выделяет выбранную строку после получения данных.
     async function focusToken(tokenId) {
         highlightedToken = tokenId;
         highlightUntil = Date.now() + 5000;
@@ -270,6 +307,9 @@
         clearTimeout(highlightTimer);
         renderTokensTable();
         await loadTokens();
+        if (highlightedToken !== tokenId) return;
+        highlightUntil = Date.now() + 5000;
+        renderTokensTable();
         if (!tokensData.some(token => String(token.id) === String(tokenId))) showNotification("Приманка не найдена в списке", "error");
         highlightTimer = setTimeout(function () {
             highlightedToken = "";
@@ -277,12 +317,14 @@
         }, 5000);
     }
 
+    // Меняет поле и направление сортировки без повторного запроса к серверу.
     function sortTokensBy(field) {
         if (tokensSort.field === field) tokensSort.dir = -tokensSort.dir;
         else { tokensSort.field = field; tokensSort.dir = 1; }
         renderTokensTable();
     }
 
+    // Применяет поиск и тип приманки к уже загруженному списку.
     function applyTokensFilter() {
         var searchEl = document.getElementById("tokensFilterSearch");
         var typeEl = document.getElementById("tokensFilterType");
@@ -291,6 +333,7 @@
         renderTokensTable();
     }
 
+    // Рисует строки приманок с путями, ошибками размещения и состоянием файла.
     function renderTokensTable() {
         var list = tokensData.slice();
         var search = tokensFilter.search;
@@ -351,6 +394,7 @@
         }
     }
 
+    // Показывает активное направление сортировки в заголовке таблицы.
     function updateTokensSortIcons() {
         document.querySelectorAll(".tokens-table thead .sortable").forEach(function (th) {
             var field = th.getAttribute("data-sort");
@@ -360,6 +404,7 @@
         });
     }
 
+    // Загружает актуальные приманки и обновляет таблицу вместе с картой сети.
     async function loadTokens() {
         const res = await apiGet("tokens");
         if (res.status === 401) return;
@@ -384,21 +429,20 @@
         });
     }
 
-    var eventsLoading = false;
-    var eventsInitialized = false;
-    var latestEventId = 0;
-    var selectedEventIds = new Set();
-    var visibleEventIds = [];
-    var eventsDeleting = false;
+    // Обновляет журнал и тревоги; запрос во время загрузки ставит повторное обновление в очередь.
     async function loadEvents() {
-        if (eventsLoading || !getToken()) return;
+        if (!getToken()) return;
+        if (eventsLoading) {
+            eventsRefreshQueued = true;
+            return;
+        }
         eventsLoading = true;
         try {
             const res = await apiGet("events");
             if (res.status === 401) return;
             if (!res.ok) { showNotification("Журнал событий недоступен", "error"); return; }
             const data = Array.isArray(res.data) ? res.data : [];
-            // Use the same cursor for socket refreshes and polling to avoid duplicate alerts.
+            // WebSocket и опрос используют один курсор: одно событие не даёт два уведомления.
             const newAlerts = data.filter(function (event) {
                 return Number(event.id) > latestEventId && alertActions.indexOf(event.action) >= 0;
             });
@@ -428,9 +472,16 @@
             selectedEventIds.forEach(id => { if (!visibleEventIds.includes(id)) selectedEventIds.delete(id); });
             document.getElementById("eventsListFull").innerHTML = data.length ? data.map(event => eventRow(event, true)).join("") : html;
             updateEventSelection();
-        } finally { eventsLoading = false; }
+        } finally {
+            eventsLoading = false;
+            if (eventsRefreshQueued) {
+                eventsRefreshQueued = false;
+                queueMicrotask(loadEvents);
+            }
+        }
     }
 
+    // Собирает безопасную HTML-строку события с русским названием действия.
     function eventRow(event, selectable) {
         const rawDate = event.observed_at || event.created_at || event.time;
         const date = rawDate ? new Date(rawDate) : new Date();
@@ -450,12 +501,14 @@
             (!event.read_at && event.id ? "<button type=\"button\" class=\"btn btn-outline\" data-action=\"markEventRead\" data-event-id=\"" + escapeHtml(event.id) + "\" title=\"Подтвердить событие\"><i class=\"fas fa-check\"></i></button>" : "") + "</div>";
     }
 
+    // Подтверждает выбранную тревогу и обновляет журнал с индикатором непрочитанного.
     async function markEventRead(eventId) {
         const result = await apiPut("events/" + encodeURIComponent(eventId) + "/read");
         if (!result.ok) showNotification(apiError(result, "Не удалось подтвердить событие"), "error");
         loadEvents();
     }
 
+    // Синхронизирует флажки, общий выбор и доступность кнопок удаления.
     function updateEventSelection() {
         document.querySelectorAll("#eventsListFull .event-select").forEach(input => { input.checked = selectedEventIds.has(Number(input.dataset.eventId)); });
         const all = document.getElementById("selectAllEvents");
@@ -467,6 +520,7 @@
         document.getElementById("deleteSelectedLabel").textContent = "Удалить выбранные" + (selectedEventIds.size ? " (" + selectedEventIds.size + ")" : "");
     }
 
+    // Удаляет выбранные записи или весь журнал только после явного подтверждения.
     async function deleteEvents(clearAll) {
         if (eventsDeleting || (!clearAll && !selectedEventIds.size)) return;
         const message = clearAll ? "Удалить весь журнал событий без возможности восстановления?" : "Удалить выбранные события (" + selectedEventIds.size + ") без возможности восстановления?";
@@ -486,6 +540,7 @@
         }
     }
 
+    // Подтверждает все события, не удаляя историю обращений к приманкам.
     async function markAllEventsRead() {
         var btn = document.querySelector("#section-events [data-action='markAllEventsRead']");
         if (btn) { btn.disabled = true; btn.innerHTML = "<i class=\"fas fa-spinner fa-spin\"></i> ..."; }
@@ -503,6 +558,7 @@
         if (btn) { btn.disabled = false; btn.innerHTML = "<i class=\"fas fa-check-double\"></i> Прочитано"; }
     }
 
+    // Экранирует текст и кавычки перед вставкой данных сервера в HTML и атрибуты.
     function escapeHtml(s) {
         if (s == null) return "";
         var div = document.createElement("div");
@@ -510,6 +566,7 @@
         return div.innerHTML.replace(/\"/g, "&quot;").replace(/'/g, "&#39;");
     }
 
+    // Проверяет параметры и создаёт приманку с заданием на выбранном Linux-сервере.
     async function generateToken() {
         var btn = document.getElementById("btnGenerate");
         var nodeId = document.getElementById("nodeSelect").value;
@@ -518,6 +575,7 @@
         var nodePath = (document.getElementById("tokenNodePath") ? document.getElementById("tokenNodePath").value || "" : "").trim();
         var auto = document.getElementById("deploymentMode").value === "auto";
         var filename = document.getElementById("tokenFilename").value.trim();
+        if (btn.disabled) return;
         if (!nodeId) {
             showNotification("Нет зарегистрированного Linux-агента", "error");
             return;
@@ -544,8 +602,7 @@
         }
     }
 
-    var wsReconnectCount = 0;
-    var wsReconnectTimer = null;
+    // Открывает защищённый канал событий и переподключается с ограниченной задержкой.
     function initWebSocket() {
         clearTimeout(wsReconnectTimer);
         var protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -576,6 +633,7 @@
         };
     }
 
+    // Показывает реальное состояние канала уведомлений в шапке журнала.
     function updateWsStatus(connected) {
         var el = document.getElementById("wsStatus");
         var text = document.getElementById("wsStatusText");
@@ -584,6 +642,7 @@
         if (text) text.textContent = connected ? "WebSocket подключен" : "WebSocket отключен";
     }
 
+    // Показывает краткое уведомление; текст вставляется без интерпретации HTML.
     function showNotification(message, type) {
         const notification = document.createElement("div");
         document.getElementById("notification")?.remove();
@@ -595,24 +654,23 @@
         setTimeout(function () { notification.remove(); }, 3000);
     }
 
+    // Завершает локальную сессию и останавливает фоновые запросы и переподключения.
     function logout() {
         clearAuth();
         clearTimeout(wsReconnectTimer);
+        clearTimeout(highlightTimer);
+        refreshTimers.forEach(timer => clearInterval(timer));
         if (ws) ws.close();
         window.location.href = "/";
     }
 
-    setInterval(function () {
-        loadNodes();
-        loadTokens();
-    }, 30000);
-    setInterval(loadEvents, 5000);
-
+    // Обновляет данные для карты теми же загрузчиками, что используются в остальных разделах.
     async function loadNetworkMap() {
         await loadNodes();
         await loadTokens();
     }
 
+    // Группирует приманки по нодам и добавляет ссылки на конкретные строки списка.
     function renderNetworkMap() {
         var container = document.getElementById("networkMap");
         if (!container) return;
@@ -648,6 +706,7 @@
         }).join("");
     }
 
+    // Сворачивает боковое меню на компьютере или открывает его на узком экране.
     function toggleSidebar() {
         document.getElementById("sidebar").classList.toggle("collapsed");
         document.getElementById("mainContent").classList.toggle("expanded");

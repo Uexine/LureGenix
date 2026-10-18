@@ -1,4 +1,4 @@
-"""Prepare a private local configuration without executing dotenv as shell code."""
+"""Подготовка и восстановление .env без исполнения его содержимого как shell-кода."""
 
 import argparse
 import json
@@ -6,10 +6,12 @@ import os
 import re
 import secrets
 import subprocess
+import tempfile
 from pathlib import Path
 
 
 def read_env(path):
+    """Читает простые KEY=value, игнорируя комментарии и снимая парные кавычки."""
     values = {}
     if path.exists():
         for line in path.read_text(encoding="utf-8-sig").splitlines():
@@ -24,7 +26,15 @@ def read_env(path):
 
 
 def configure(path, example, lan=False, volume=None, local=False, recovered=None):
+    """Дополняет конфигурацию без смены заполненных секретов и атомарно сохраняет .env."""
     defaults = read_env(example)
+    if (
+        not {"DB_NAME", "DB_USER", "APP_DB_USER", "JWT_SECRET", "AGENT_SECRET"}
+        <= defaults.keys()
+    ):
+        raise ValueError(
+            "Не найден корректный .env.example. Запускайте настройку из корня проекта."
+        )
     values = {**defaults, **(recovered or {})}
     values.update(
         {
@@ -33,7 +43,7 @@ def configure(path, example, lan=False, volume=None, local=False, recovered=None
             if value or key not in (recovered or {})
         }
     )
-    # The example is the configuration schema; obsolete provider keys are not retained.
+    # Пример задаёт поддерживаемые ключи; старые настройки провайдеров не переносим.
     values = {key: values[key] for key in defaults}
     for key in (
         "DB_PASSWORD",
@@ -77,68 +87,60 @@ def configure(path, example, lan=False, volume=None, local=False, recovered=None
         raise ValueError(
             "Настройки не должны содержать переносы строк, NUL, '$' или '#'. Используйте URL-безопасные секреты."
         )
-    temporary = path.with_suffix(".env.tmp")
-    descriptor = os.open(
-        temporary,
-        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
-        0o600,
+    descriptor, temporary = tempfile.mkstemp(
+        dir=path.parent, prefix=f"{path.name}.", suffix=".tmp"
     )
-    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
-        for key, value in values.items():
-            stream.write(f"{key}={value}\n")
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.replace(temporary, path)
-    os.chmod(path, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            for key, value in values.items():
+                stream.write(f"{key}={value}\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        os.chmod(path, 0o600)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
     return values, created_password
 
 
+def docker_output(*args):
+    """Читает вывод Docker с таймаутом, не выводя реквизиты контейнеров в консоль."""
+    return subprocess.run(
+        ["docker", *args], capture_output=True, text=True, check=True, timeout=10
+    ).stdout
+
+
 def existing_database_volume():
+    """Находит единственный том БД проекта, чтобы обновление не создало пустую базу рядом."""
     try:
-        result = subprocess.run(
-            [
-                "docker",
-                "ps",
-                "--all",
-                "--filter",
-                "label=com.docker.compose.project=luregenix",
-                "--filter",
-                "label=com.docker.compose.service=postgres",
-                "--format",
-                "{{.ID}}",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
-        containers = result.stdout.split()
+        containers = docker_output(
+            "ps",
+            "--all",
+            "--filter",
+            "label=com.docker.compose.project=luregenix",
+            "--filter",
+            "label=com.docker.compose.service=postgres",
+            "--format",
+            "{{.ID}}",
+        ).split()
         if not containers:
             return None
         if len(containers) != 1:
             raise ValueError(
                 "Найдено несколько контейнеров БД. Устраните дубликат перед настройкой."
             )
-        result = subprocess.run(
-            [
-                "docker",
-                "inspect",
-                "--format",
-                '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}',
-                containers[0],
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
+        volume = docker_output(
+            "inspect",
+            "--format",
+            '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}',
+            containers[0],
+        ).strip()
     except FileNotFoundError:
         return None
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise ValueError(
             "Не удалось проверить существующую БД. Проверьте доступ к Docker."
         ) from exc
-    volume = result.stdout.strip()
     if not volume:
         raise ValueError(
             "Существующая БД использует bind mount. Сохраните это подключение явно в Compose."
@@ -147,36 +149,21 @@ def existing_database_volume():
 
 
 def recover_container_env():
-    """Read credentials from this Compose project's containers, without logging them."""
+    """Восстанавливает конфигурацию только из контейнеров LureGenix, скрывая значения секретов."""
     try:
-        result = subprocess.run(
-            [
-                "docker",
-                "ps",
-                "--all",
-                "--filter",
-                "label=com.docker.compose.project=luregenix",
-                "--format",
-                "{{.ID}}",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
-        ids = result.stdout.split()
+        ids = docker_output(
+            "ps",
+            "--all",
+            "--filter",
+            "label=com.docker.compose.project=luregenix",
+            "--format",
+            "{{.ID}}",
+        ).split()
         if not ids:
             raise ValueError(
                 "Нет контейнеров LureGenix для восстановления .env. Нужна резервная копия."
             )
-        result = subprocess.run(
-            ["docker", "inspect", *ids],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
-        containers = json.loads(result.stdout)
+        containers = json.loads(docker_output("inspect", *ids))
         if not isinstance(containers, list):
             raise ValueError("Docker вернул некорректные сведения о контейнерах.")
     except (
@@ -212,6 +199,7 @@ def recover_container_env():
     }
 
     def remember(key, value):
+        """Сохраняет настройку, отклоняя конфликтующие значения в разных контейнерах."""
         if not value:
             return
         if key in restored and restored[key] != value:
@@ -248,7 +236,7 @@ def recover_container_env():
                 remember(key, env.get(key))
         elif service in app_services:
             remember("DB_NAME", env.get("DB_NAME"))
-            # Older releases used the owner role; migrate those to a dedicated app role.
+            # Старые версии работали владельцем БД; им будет создана отдельная роль приложения.
             if env.get("DB_USER", "").startswith("luregenix_"):
                 remember("APP_DB_USER", env["DB_USER"])
                 remember("APP_DB_PASSWORD", env.get("DB_PASSWORD"))
@@ -275,6 +263,7 @@ def recover_container_env():
 
 
 def main():
+    """Обрабатывает режим сети и восстановление, сохраняя привязку к существующей БД."""
     parser = argparse.ArgumentParser()
     network = parser.add_mutually_exclusive_group()
     network.add_argument("--lan", action="store_true")
@@ -286,7 +275,7 @@ def main():
         help="Восстановить потерянный .env из сохранившихся контейнеров, не изменяя БД",
     )
     args = parser.parse_args()
-    # Keep old anonymous volumes when moving an existing installation to named storage.
+    # Сохраняем старые анонимные тома при переходе на именованное хранилище.
     try:
         volume = existing_database_volume()
     except ValueError as exc:

@@ -1,3 +1,4 @@
+-- Журнал обращений к приманкам; created_at фиксирует время приёма события сервером.
 CREATE TABLE IF NOT EXISTS event_log (
     id SERIAL PRIMARY KEY,
     token_id TEXT,

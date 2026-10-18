@@ -1,14 +1,13 @@
 import base64
 import hashlib
-import os
 import posixpath
 import uuid
 from contextlib import asynccontextmanager, closing
 from typing import Literal
 
-import requests
 from fastapi import HTTPException
 from generator import TOKEN_TYPES, GenerationError, generate_file
+from generator import generation_status as get_generation_status
 from pydantic import BaseModel, ConfigDict, Field
 
 from common.api import create_app
@@ -18,6 +17,7 @@ from common.database import utc_timestamp
 
 @asynccontextmanager
 async def lifespan(app):
+    """Проверяет наличие миграций очереди размещения перед запуском API."""
     with closing(get_db()) as conn, conn.cursor() as cur:
         cur.execute("SELECT attempt FROM honeytoken_deployments LIMIT 0")
     yield
@@ -28,29 +28,13 @@ app = create_app(lifespan=lifespan, database=lambda: get_db())
 
 @app.get("/generation-status")
 def generation_status():
-    mode = os.getenv("GENERATION_MODE", "template")
-    model = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
-    try:
-        result = requests.get(
-            os.getenv("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
-            + "/api/tags",
-            timeout=3,
-        )
-        result.raise_for_status()
-        llm_ready = model in {
-            item.get("name") for item in result.json().get("models", [])
-        }
-    except (requests.RequestException, ValueError, AttributeError, TypeError):
-        llm_ready = False
-    return {
-        "mode": mode,
-        "model": model,
-        "ready": mode == "template" or llm_ready,
-        "llm_ready": llm_ready,
-    }
+    """Отдаёт состояние генератора, не скачивая и не запуская модель."""
+    return get_generation_status()
 
 
 class GenerateRequest(BaseModel):
+    """Тип содержимого и параметры размещения на выбранной ноде."""
+
     model_config = ConfigDict(extra="forbid")
     node_id: int = Field(gt=0)
     type: str = "txt"
@@ -62,6 +46,8 @@ class GenerateRequest(BaseModel):
 
 
 class DeploymentResult(BaseModel):
+    """Результат конкретной попытки размещения, полученный от агента."""
+
     node_id: int = Field(gt=0)
     status: Literal["deployed", "failed"]
     deployed_path: str = Field(default="", max_length=4096)
@@ -70,6 +56,7 @@ class DeploymentResult(BaseModel):
 
 
 def validate_target(path):
+    """Разрешает пустой путь для автоподбора или нормализованный абсолютный Linux-путь."""
     if path and (
         not path.startswith("/")
         or path.startswith("//")
@@ -83,6 +70,7 @@ def validate_target(path):
 
 
 def validate_filename(filename):
+    """Проверяет отдельное имя файла без переходов в другие каталоги."""
     if (
         not filename
         or filename in (".", "..")
@@ -97,8 +85,16 @@ def validate_filename(filename):
     return filename
 
 
+def requested_path(target, filename, kind):
+    """Собирает ожидаемый путь; при автоматическом размещении он пока неизвестен."""
+    if not target:
+        return ""
+    return target if kind == "file" else posixpath.join(target, filename)
+
+
 @app.get("/token-types")
 def token_types():
+    """Возвращает поддерживаемые типы и русские названия для формы генерации."""
     return [
         {"id": index, "name": key, "description": value[0]}
         for index, (key, value) in enumerate(TOKEN_TYPES.items(), 1)
@@ -107,6 +103,7 @@ def token_types():
 
 @app.post("/generate")
 def generate(data: GenerateRequest):
+    """Генерирует содержимое и атомарно сохраняет приманку вместе с заданием агенту."""
     token_type = {"env": "env_file", "sql": "db_dump"}.get(
         data.type.lower(), data.type.lower()
     )
@@ -144,13 +141,7 @@ def generate(data: GenerateRequest):
     except GenerationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    intended_path = (
-        target
-        if data.target_kind == "file"
-        else posixpath.join(target, filename)
-        if target
-        else ""
-    )
+    intended_path = requested_path(target, filename, data.target_kind)
     placement = f"node:{data.node_id}, path:{intended_path or 'auto'}, name:{data.name}, status:pending"
     with closing(get_db()) as conn, conn, conn.cursor() as cur:
         cur.execute(
@@ -190,6 +181,7 @@ def generate(data: GenerateRequest):
 
 @app.get("/tokens")
 def list_tokens():
+    """Возвращает последние 500 приманок, включая старые записи без задания агенту."""
     with closing(get_db()) as conn, conn.cursor() as cur:
         cur.execute(
             """SELECT hf.id, hf.token_type, hf.file_path, hf.placement, hf.created_at,
@@ -221,6 +213,7 @@ def list_tokens():
 
 @app.get("/agent/tasks")
 def agent_tasks(node_id: int):
+    """Выдаёт ожидающие задания и пути размещённых файлов для восстановления наблюдения."""
     with closing(get_db()) as conn, conn.cursor() as cur:
         cur.execute(
             """SELECT d.id, d.token_id, hf.token_type, d.filename, d.target_path,
@@ -250,6 +243,7 @@ def agent_tasks(node_id: int):
 
 @app.post("/tokens/{token_id}/retry")
 def retry(token_id: uuid.UUID):
+    """Повышает номер попытки и возвращает в очередь только неудачное размещение."""
     with closing(get_db()) as conn, conn, conn.cursor() as cur:
         cur.execute(
             "UPDATE honeytoken_deployments SET status='pending',error=NULL,completed_at=NULL,attempt=attempt+1,updated_at=now() WHERE token_id=%s AND status='failed' RETURNING id",
@@ -262,6 +256,7 @@ def retry(token_id: uuid.UUID):
 
 @app.put("/agent/tasks/{task_id}/result")
 def report_result(task_id: int, data: DeploymentResult):
+    """Фиксирует результат агента, отклоняя чужую ноду и устаревшие попытки."""
     if data.status == "deployed" and not data.deployed_path:
         raise HTTPException(
             status_code=400, detail="Не указан путь размещённого файла."
@@ -287,7 +282,7 @@ def report_result(task_id: int, data: DeploymentResult):
             )
         if row[1] == "deployed":
             return {"status": "ok", "deployment_status": "deployed", "path": path}
-        expected_path = row[4] if row[6] == "file" else posixpath.join(row[4], row[5])
+        expected_path = requested_path(row[4], row[5], row[6])
         if data.status == "deployed" and row[4] and path != expected_path:
             raise HTTPException(
                 400, "Путь размещённого файла не совпадает с выбранным."
@@ -310,3 +305,6 @@ def report_result(task_id: int, data: DeploymentResult):
             (placement, row[0]),
         )
     return {"status": "ok", "deployment_status": data.status, "path": path}
+
+
+"""Создание приманок, очередь размещения и результаты работы Linux-агентов."""

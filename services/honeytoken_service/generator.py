@@ -36,10 +36,35 @@ FORMAT_INSTRUCTIONS = {
 
 
 class GenerationError(Exception):
-    pass
+    """Понятная администратору ошибка, не содержащая внутренних ответов модели."""
+
+
+def generation_status():
+    """Проверяет наличие модели в Ollama; шаблоны доступны независимо от неё."""
+    mode = os.getenv("GENERATION_MODE", "template")
+    model = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
+    try:
+        response = requests.get(
+            os.getenv("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
+            + "/api/tags",
+            timeout=3,
+        )
+        response.raise_for_status()
+        llm_ready = model in {
+            item.get("name") for item in response.json().get("models", [])
+        }
+    except (requests.RequestException, ValueError, AttributeError, TypeError):
+        llm_ready = False
+    return {
+        "mode": mode,
+        "model": model,
+        "ready": mode == "template" or (mode == "llm" and llm_ready),
+        "llm_ready": llm_ready,
+    }
 
 
 def llm_content(token_type):
+    """Запрашивает вымышленное содержимое у модели и проверяет завершённость ответа."""
     base_url = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
     model = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
     try:
@@ -114,6 +139,7 @@ def llm_content(token_type):
 
 
 def generate_file(token_type, mode=None):
+    """Возвращает байты файла и источник: локальные ключи, шаблон или LLM."""
     if token_type not in TOKEN_TYPES:
         raise GenerationError("Неподдерживаемый тип приманки.")
     mode = mode or os.getenv("GENERATION_MODE", "template")
@@ -144,7 +170,7 @@ def generate_file(token_type, mode=None):
 
 
 def encode_content(token_type, content):
-    # Generated text is packaged as data; SQL and shell-history decoys are never executed.
+    """Упаковывает текст в выбранный формат, не исполняя SQL и историю команд."""
     if token_type == "backup_archive":
         buffer = io.BytesIO()
         payload = content.encode("utf-8")
@@ -183,6 +209,7 @@ def encode_content(token_type, content):
 
 
 def template_content(token_type):
+    """Создаёт правдоподобный шаблон с вымышленными реквизитами и случайным секретом."""
     password = secrets.token_urlsafe(24)
     sql = (
         "-- Application database backup\n"
@@ -213,3 +240,6 @@ def template_content(token_type):
         token_type,
         f"Operations backup notes\n\nBackup endpoint: https://backup.example.com\nAccount: backup_admin\nRecovery password: {password}\n",
     )
+
+
+"""Форматы файловых приманок, шаблоны и генерация через локальную Ollama."""

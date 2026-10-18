@@ -1,4 +1,4 @@
-"""Authenticated public API and agent boundary for the private backend services."""
+"""Публичный API: проверка прав администратора и агента перед обращением к сервисам."""
 
 import asyncio
 import os
@@ -6,6 +6,7 @@ import secrets
 import threading
 import time
 from contextlib import asynccontextmanager, suppress
+from uuid import UUID
 
 import jwt
 import requests
@@ -39,6 +40,7 @@ generation_limit = asyncio.Semaphore(2)
 
 @asynccontextmanager
 async def lifespan(app):
+    """Не допускает запуск шлюза с незаполненными секретами."""
     if len(JWT_SECRET) < 32 or len(os.getenv("AGENT_SECRET", "")) < 32:
         raise RuntimeError("Настройте секреты командой python3 tools/setup_env.py.")
     yield
@@ -48,12 +50,13 @@ app = create_app(lifespan=lifespan)
 api = APIRouter(prefix="/api")
 
 
-def forward_request(service_url, path, method, data=None, headers=None, timeout=5):
+def forward_request(service_url, path, method, data=None, timeout=5):
+    """Передаёт запрос внутреннему сервису и проверяет формат его ответа."""
     if method not in ("GET", "POST", "PUT", "DELETE"):
         raise HTTPException(405, "Метод запроса не поддерживается.")
     try:
         response = requests.request(
-            method, service_url + path, json=data, headers=headers, timeout=timeout
+            method, service_url + path, json=data, timeout=timeout
         )
     except requests.RequestException as exc:
         raise HTTPException(
@@ -62,12 +65,16 @@ def forward_request(service_url, path, method, data=None, headers=None, timeout=
     if not response.content:
         return {}, response.status_code
     try:
-        return response.json(), response.status_code
+        result = response.json()
+        if not isinstance(result, (dict, list)):
+            raise ValueError("Unexpected backend response")
+        return result, response.status_code
     except ValueError:
         return {"detail": "Сервис вернул некорректный ответ."}, 502
 
 
 def proxy_request(service, path, method="GET", **kwargs):
+    """Возвращает данные сервиса или поднимает его HTTP-ошибку без лишнего вложения."""
     result, status = forward_request(service, path, method, **kwargs)
     if not 200 <= status < 300:
         detail = (
@@ -80,12 +87,14 @@ def proxy_request(service, path, method="GET", **kwargs):
 
 
 def decode_token(token):
+    """Проверяет подпись JWT, срок действия и обязательный идентификатор пользователя."""
     return jwt.decode(
         token, JWT_SECRET, algorithms=["HS256"], options={"require": ["exp", "sub"]}
     )
 
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Разрешает административный запрос только с действующей Bearer-сессией."""
     if not credentials:
         raise HTTPException(401, "Необходим вход в систему.")
     try:
@@ -97,6 +106,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
 
 
 def verify_enrollment(x_agent_secret: str = Header(default="")):
+    """Проверяет общий секрет, используемый только для регистрации и heartbeat."""
     expected = os.getenv("AGENT_SECRET", "")
     if not expected:
         raise HTTPException(503, "Регистрация агентов не настроена.")
@@ -107,6 +117,7 @@ def verify_enrollment(x_agent_secret: str = Header(default="")):
 def verify_agent(
     x_agent_id: str = Header(default=""), x_agent_token: str = Header(default="")
 ):
+    """Определяет ноду по собственному ключу агента, а не по данным запроса."""
     if not x_agent_id or not x_agent_token:
         raise HTTPException(401, "Необходимы идентификатор и ключ агента.")
     return proxy_request(
@@ -118,6 +129,7 @@ def verify_agent(
 
 
 async def json_object(request):
+    """Принимает только JSON-объект, отклоняя повреждённый JSON и другие типы."""
     try:
         data = await request.json()
     except ValueError as exc:
@@ -128,6 +140,7 @@ async def json_object(request):
 
 
 def check_login_limit(request, username):
+    """Ограничивает попытки входа за минуту и удаляет устаревшие записи лимитера."""
     key = (request.client.host if request.client else "unknown", str(username)[:100])
     now = time.monotonic()
     with login_lock:
@@ -149,11 +162,13 @@ def check_login_limit(request, username):
 @app.get("/health")
 @api.get("/health")
 def health():
+    """Показывает, что процесс шлюза запущен и принимает HTTP-запросы."""
     return {"status": "ok"}
 
 
 @api.get("/readiness")
 def readiness():
+    """Проверяет доступность всех внутренних сервисов и их соединений с БД."""
     for service in (AUTH_SERVICE, TOKEN_SERVICE, EVENT_SERVICE, DISCOVERY_SERVICE):
         proxy_request(service, "/health")
     return {"status": "ok"}
@@ -161,6 +176,7 @@ def readiness():
 
 @api.post("/login")
 async def login(request: Request):
+    """Проверяет лимит попыток и передаёт авторизацию сервису учётных записей."""
     data = await json_object(request)
     check_login_limit(request, data.get("username", ""))
     return await run_in_threadpool(
@@ -170,6 +186,7 @@ async def login(request: Request):
 
 @api.post("/generate")
 async def generate(request: Request, _: dict = Depends(verify_token)):
+    """Ставит генерацию в ограниченный пул, чтобы LLM не занимала все ресурсы шлюза."""
     data = await json_object(request)
     if generation_limit.locked():
         raise HTTPException(429, "Генератор занят. Повторите попытку позже.")
@@ -186,46 +203,55 @@ async def generate(request: Request, _: dict = Depends(verify_token)):
 
 @api.get("/events")
 def events(_: dict = Depends(verify_token)):
+    """Отдаёт журнал событий вошедшему администратору."""
     return proxy_request(EVENT_SERVICE, "/events")
 
 
 @api.delete("/events")
 def delete_events(data: dict, _: dict = Depends(verify_token)):
+    """Передаёт явный выбор событий или очистку журнала сервису событий."""
     return proxy_request(EVENT_SERVICE, "/events", "DELETE", data=data)
 
 
 @api.get("/events/unread_count")
 def events_unread_count(_: dict = Depends(verify_token)):
+    """Отдаёт количество неподтверждённых тревог для индикатора интерфейса."""
     return proxy_request(EVENT_SERVICE, "/events/unread_count")
 
 
 @api.put("/events/{event_id}/read")
 def event_mark_read(event_id: int, _: dict = Depends(verify_token)):
+    """Подтверждает выбранное событие от имени администратора."""
     return proxy_request(EVENT_SERVICE, f"/events/{event_id}/read", "PUT")
 
 
 @api.put("/events/read_all")
 def events_mark_all_read(_: dict = Depends(verify_token)):
+    """Передаёт подтверждение всех непрочитанных событий."""
     return proxy_request(EVENT_SERVICE, "/events/read_all", "PUT")
 
 
 @api.get("/tokens")
 def tokens(_: dict = Depends(verify_token)):
+    """Возвращает список приманок, путей и состояний размещения."""
     return proxy_request(TOKEN_SERVICE, "/tokens")
 
 
 @api.get("/token-types")
 def token_types(_: dict = Depends(verify_token)):
+    """Отдаёт доступные типы приманок для формы генерации."""
     return proxy_request(TOKEN_SERVICE, "/token-types")
 
 
 @api.get("/nodes")
 def nodes(_: dict = Depends(verify_token)):
+    """Возвращает зарегистрированные серверы и время их последнего heartbeat."""
     return proxy_request(DISCOVERY_SERVICE, "/nodes")
 
 
 @api.post("/register")
 async def register_node(request: Request, _: None = Depends(verify_enrollment)):
+    """Принимает регистрацию или heartbeat после проверки секрета подключения."""
     data = await json_object(request)
     return await run_in_threadpool(
         proxy_request, DISCOVERY_SERVICE, "/register", "POST", data=data
@@ -234,6 +260,7 @@ async def register_node(request: Request, _: None = Depends(verify_enrollment)):
 
 @api.get("/agent/tasks")
 def agent_tasks(node_id: int, agent: dict = Depends(verify_agent)):
+    """Отдаёт агенту только задания его собственной ноды."""
     if node_id != agent["node_id"]:
         raise HTTPException(403, "Нет доступа к заданиям другого сервера.")
     return proxy_request(TOKEN_SERVICE, f"/agent/tasks?node_id={node_id}")
@@ -241,6 +268,7 @@ def agent_tasks(node_id: int, agent: dict = Depends(verify_agent)):
 
 @api.put("/agent/tasks/{task_id}/result")
 def agent_task_result(task_id: int, data: dict, agent: dict = Depends(verify_agent)):
+    """Принимает результат размещения только для ноды отправителя."""
     if data.get("node_id") != agent["node_id"]:
         raise HTTPException(403, "Нельзя передавать результаты для другого сервера.")
     return proxy_request(
@@ -249,9 +277,8 @@ def agent_task_result(task_id: int, data: dict, agent: dict = Depends(verify_age
 
 
 @api.post("/agent/event")
-@api.post("/event")
 def agent_event(data: dict, agent: dict = Depends(verify_agent)):
-    # Neither the node nor hostname is trusted from an agent's event payload.
+    """Привязывает событие к проверенной ноде, исключая подмену сервера в JSON."""
     payload = {
         **data,
         "node_id": agent["node_id"],
@@ -262,6 +289,7 @@ def agent_event(data: dict, agent: dict = Depends(verify_agent)):
 
 @api.post("/admins")
 def create_admin(data: dict = Body(default=None), _: dict = Depends(verify_token)):
+    """Создаёт администратора, подставляя внутренний секрет только на стороне шлюза."""
     payload = {
         key: value
         for key, value in (data or {}).items()
@@ -273,11 +301,13 @@ def create_admin(data: dict = Body(default=None), _: dict = Depends(verify_token
 
 @api.post("/scan")
 def scan(data: dict, _: dict = Depends(verify_token)):
+    """Запускает поиск SSH-серверов по явному запросу вошедшего администратора."""
     return proxy_request(DISCOVERY_SERVICE, "/scan", "POST", data=data, timeout=20)
 
 
 @api.put("/password")
 def change_password(data: dict, user: dict = Depends(verify_token)):
+    """Подставляет ID из JWT, не позволяя сменить пароль другой учётной записи."""
     payload = {
         "_admin_id": user["sub"],
         "current_password": data.get("current_password"),
@@ -288,11 +318,13 @@ def change_password(data: dict, user: dict = Depends(verify_token)):
 
 @api.get("/generation-status")
 def generation_status(_: dict = Depends(verify_token)):
+    """Возвращает доступность шаблонов и локальной модели."""
     return proxy_request(TOKEN_SERVICE, "/generation-status")
 
 
 @api.post("/tokens/{token_id}/retry")
-def retry(token_id: str, _: dict = Depends(verify_token)):
+def retry(token_id: UUID, _: dict = Depends(verify_token)):
+    """Повторно ставит неудачное размещение выбранной приманки в очередь."""
     return proxy_request(TOKEN_SERVICE, f"/tokens/{token_id}/retry", "POST", data={})
 
 
@@ -301,6 +333,7 @@ app.include_router(api)
 
 @app.websocket("/ws/events")
 async def websocket_proxy(websocket: WebSocket):
+    """Связывает браузер с каналом событий до отключения или истечения JWT."""
     protocols = websocket.scope.get("subprotocols", [])
     try:
         token_protocol = next(
@@ -317,6 +350,7 @@ async def websocket_proxy(websocket: WebSocket):
         async with websockets.connect(EVENT_WS_URL) as backend:
 
             async def receive():
+                """Передаёт сообщения браузера во внутренний WebSocket-канал."""
                 try:
                     while True:
                         await backend.send(await websocket.receive_text())
@@ -324,6 +358,7 @@ async def websocket_proxy(websocket: WebSocket):
                     pass
 
             async def send():
+                """Передаёт уведомления сервиса событий в браузер."""
                 async for message in backend:
                     await websocket.send_text(message)
 
