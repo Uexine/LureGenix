@@ -103,8 +103,8 @@ def allowed_path(path):
     )
 
 
-def target_file(task):
-    """Выбирает конечный путь в существующем каталоге, вручную или автоматически."""
+def target_file(task, records=()):
+    """Выбирает ручной путь или свободный каталог с наименьшим числом приманок."""
     filename = task["filename"]
     if filename in ("", ".", "..") or any(c in filename for c in "/\\\x00\r\n"):
         raise ValueError("Некорректное имя файла.")
@@ -118,18 +118,45 @@ def target_file(task):
             else os.path.join(target, filename)
         )
     else:
-        directory = next(
-            (
-                p
-                for p in AUTO_DIRS
-                if os.path.isdir(p)
-                and allowed_path(p)
-                and os.access(p, os.W_OK | os.X_OK)
-            ),
-            None,
-        )
-        if not directory:
+        counts = {}
+        for record in records:
+            if (
+                record.get("status") in ("writing", "deployed")
+                and record.get("file_state") != "missing"
+                and record.get("path")
+            ):
+                parent = os.path.dirname(os.path.abspath(record["path"]))
+                counts[parent] = counts.get(parent, 0) + 1
+        directories = []
+        for candidate in AUTO_DIRS:
+            if not os.path.isabs(candidate):
+                continue
+            candidate = os.path.abspath(candidate)
+            if (
+                candidate in directories
+                or not allowed_path(os.path.join(candidate, filename))
+                or not os.access(candidate, os.W_OK | os.X_OK)
+            ):
+                continue
+            try:
+                descriptor = open_directory(candidate)
+            except OSError:
+                continue
+            os.close(descriptor)
+            directories.append(candidate)
+        if not directories:
             raise ValueError("Нет доступного для записи каталога в AGENT_AUTO_DIRS.")
+        available = [
+            directory
+            for directory in directories
+            if not os.path.lexists(os.path.join(directory, filename))
+        ]
+        if not available:
+            raise FileExistsError(
+                "Файл с таким именем уже существует во всех доступных каталогах. Выберите другое имя."
+            )
+        # При равной загрузке сохраняем приоритет из AGENT_AUTO_DIRS.
+        directory = min(available, key=lambda item: counts.get(item, 0))
         path = os.path.join(directory, filename)
     if not allowed_path(path):
         raise ValueError("Каталог не входит в список AGENT_ALLOWED_DIRS.")
@@ -266,12 +293,9 @@ class Agent:
         self.monitor_failures = set()
         for record in self.state["tasks"].values():
             if record["status"] == "deployed":
-                try:
-                    self.watch(record["token_id"], record["path"])
-                except (OSError, ValueError) as exc:
-                    logger.warning(
-                        "Не удалось восстановить мониторинг %s: %s", record["path"], exc
-                    )
+                self.restore_monitor(
+                    {"token_id": record["token_id"], "deployed_path": record["path"]}
+                )
 
     def persist(self):
         """Атомарно сохраняет журнал и синхронизирует его с диском перед сетевыми операциями."""
@@ -418,7 +442,10 @@ class Agent:
                 raise ValueError(
                     "Контрольная сумма файла не совпадает. Размещение отменено."
                 )
-            path = record["path"] if record else target_file(task)
+            path = (
+                record["path"]
+                if record else target_file(task, self.state["tasks"].values())
+            )
             if record is None:
                 record = {
                     "status": "writing",
@@ -444,7 +471,7 @@ class Agent:
                 write_file(path, payload, task["token_id"])
             self.monitor_events(timeout=0)
             self.watch(task["token_id"], path)
-            record.update(status="deployed", error="")
+            record.update(status="deployed", error="", file_state="present")
         except Exception as exc:
             logger.warning("Размещение %s не выполнено (%s)", key, type(exc).__name__)
             record = {
@@ -468,24 +495,65 @@ class Agent:
                 self.report_deployment(task, self.deploy(task))
 
     def restore_monitor(self, task):
-        """Восстанавливает наблюдение без повторной записи и сообщает об ошибке один раз."""
+        """Восстанавливает наблюдение и сверяет файл, не создавая удалённую приманку заново."""
         key = task["token_id"]
+        record = self.state["tasks"].get(key)
+        if (
+            not record
+            or record["status"] != "deployed"
+            or record["path"] != task["deployed_path"]
+        ):
+            record = {
+                "status": "deployed",
+                "path": task["deployed_path"],
+                "token_id": key,
+                "announced": True,
+            }
+            self.state["tasks"][key] = record
+            self.persist()
+        watch_error = None
         try:
             self.watch(key, task["deployed_path"])
             self.monitor_failures.discard(key)
-            if key not in self.state["tasks"]:
-                self.state["tasks"][key] = {
-                    "status": "deployed",
-                    "path": task["deployed_path"],
-                    "token_id": key,
-                    "announced": True,
-                }
-                self.persist()
         except (OSError, ValueError) as exc:
-            if key not in self.monitor_failures:
+            watch_error = exc
+        # Проверка нужна и при недоступном родительском каталоге; stat не вызывает чтение приманки.
+        file_state = self.check_file(record)
+        if watch_error is not None and key not in self.monitor_failures:
+            if file_state == "present":
                 self.queue_event(key, "monitor_error", task["deployed_path"])
-                self.monitor_failures.add(key)
-            logger.warning("Ошибка мониторинга %s: %s", task["deployed_path"], exc)
+            self.monitor_failures.add(key)
+            logger.warning("Ошибка мониторинга %s: %s", task["deployed_path"], watch_error)
+
+    def check_file(self, record):
+        """Обнаруживает пропажу файла даже после простоя; состояние и тревогу сохраняет вместе."""
+        path = record["path"]
+        try:
+            if not allowed_path(path):
+                raise ValueError("Путь мониторинга не входит в список AGENT_ALLOWED_DIRS.")
+            directory = open_directory(os.path.dirname(path))
+            try:
+                metadata = os.stat(
+                    os.path.basename(path), dir_fd=directory, follow_symlinks=False
+                )
+            finally:
+                os.close(directory)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("Вместо приманки обнаружен каталог или символьная ссылка.")
+            state, action = "present", None
+        except FileNotFoundError:
+            state, action = "missing", "delete"
+        except (OSError, ValueError) as exc:
+            state, action = "error", "monitor_error"
+            if record.get("file_state") != state:
+                logger.warning("Не удалось проверить приманку %s: %s", path, exc)
+        if record.get("file_state") != state:
+            record["file_state"] = state
+            if action:
+                self.queue_event(record["token_id"], action, path)
+            else:
+                self.persist()
+        return state
 
     def report_deployment(self, task, record):
         """Подтверждает результат серверу и добавляет уведомление о размещении в локальную очередь."""
@@ -567,7 +635,15 @@ class Agent:
         now = time.monotonic()
         for token_id, (action, path, _) in batch.items():
             cooldown_key = (token_id, action)
+            record = self.state["tasks"].get(token_id)
+            if action == "delete" and record and record.get("file_state") == "missing":
+                continue
             if now - self.last_alert.get(cooldown_key, -10) >= 2:
+                if record:
+                    if action == "delete":
+                        record["file_state"] = "missing"
+                    elif action == "modify":
+                        record["file_state"] = "present"
                 self.queue_event(token_id, action, path)
                 self.last_alert[cooldown_key] = now
 
