@@ -1,11 +1,21 @@
+"""Сборка файлов из проверенных данных LLM или локальных шаблонов."""
+
 import base64
 import io
 import json
 import os
 import secrets
 import tarfile
+from datetime import datetime
+from pathlib import Path
+from threading import Lock
 
 import requests
+
+from llm import (
+    DatabaseContent, DocumentContent, EnvironmentContent, GenerationError,
+    HistoryContent, LogContent, RegistryContent, check_model, generate_content,
+)
 
 TOKEN_TYPES = {
     "ssh_key": ("Закрытый SSH-ключ", "id_rsa_backup"),
@@ -22,21 +32,7 @@ TOKEN_TYPES = {
     "txt": ("Текстовый документ", "operations_notes.txt"),
 }
 
-FORMAT_INSTRUCTIONS = {
-    "env_file": "Valid dotenv KEY=value lines for a fictional application.",
-    "db_dump": "Valid PostgreSQL SQL with CREATE TABLE and INSERT statements for fictional users and settings.",
-    "bash_history": "Plausible shell command history with fictional backup and administration paths.",
-    "log_file": "Plausible web access log lines using documentation IP addresses.",
-    "backup_archive": "Valid PostgreSQL SQL backup text; it will be packaged into a tar.gz archive.",
-    "docker_config": "Valid JSON registry configuration with fictional authentication data.",
-    "pdf": "An internal operations document in English with a title and several paragraphs.",
-    "docx": "An internal operations document in English with a title and several paragraphs.",
-    "txt": "An internal operations document in English with a title and several paragraphs.",
-}
-
-
-class GenerationError(Exception):
-    """Понятная администратору ошибка, не содержащая внутренних ответов модели."""
+font_lock = Lock()
 
 
 def generation_status():
@@ -44,101 +40,28 @@ def generation_status():
     mode = os.getenv("GENERATION_MODE", "template")
     model = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
     try:
-        response = requests.get(
-            os.getenv("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
-            + "/api/tags",
-            timeout=3,
-        )
-        response.raise_for_status()
-        llm_ready = model in {
-            item.get("name") for item in response.json().get("models", [])
-        }
+        info, warning = check_model()
+        installed = info is not None
+        llm_ready = installed and not warning
+    except GenerationError as exc:
+        installed = False
+        warning = str(exc)
+        llm_ready = False
     except (requests.RequestException, ValueError, AttributeError, TypeError):
+        installed = False
+        warning = "Нет соединения с Ollama."
         llm_ready = False
     return {
         "mode": mode,
         "model": model,
         "ready": mode == "template" or (mode == "llm" and llm_ready),
         "llm_ready": llm_ready,
+        "installed": installed,
+        "warning": warning,
     }
 
 
-def llm_content(token_type):
-    """Запрашивает вымышленное содержимое у модели и проверяет завершённость ответа."""
-    base_url = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
-    model = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
-    try:
-        response = requests.post(
-            f"{base_url}/api/chat",
-            timeout=(5, float(os.getenv("LLM_TIMEOUT_SECONDS", "180"))),
-            json={
-                "model": model,
-                "stream": False,
-                "format": {
-                    "type": "object",
-                    "properties": {"content": {"type": "string"}},
-                    "required": ["content"],
-                    "additionalProperties": False,
-                },
-                "options": {"num_predict": 2000, "num_ctx": 4096, "temperature": 0.6},
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Generate realistic fictional file content for a defensive honeytoken. "
-                            "Return a JSON object with exactly one string field named content. "
-                            "Use only invented names and credentials, reserved example domains, "
-                            "and documentation IP addresses. Do not label the content as a decoy. "
-                            "Do not include markdown code fences."
-                        ),
-                    },
-                    {"role": "user", "content": FORMAT_INSTRUCTIONS[token_type]},
-                ],
-            },
-        )
-        if response.status_code == 404:
-            raise GenerationError(
-                f"Локальная модель {model} не найдена. Загрузите её в Ollama."
-            )
-        response.raise_for_status()
-        result = response.json()
-        if result.get("error"):
-            raise GenerationError("Ошибка генерации Ollama. Проверьте журнал сервиса.")
-        if result.get("done") is not True or result.get("done_reason") == "length":
-            raise GenerationError("Ответ модели обрезан. Повторите генерацию.")
-        content = json.loads(result["message"]["content"])["content"]
-        if (
-            not isinstance(content, str)
-            or not content.strip()
-            or len(content.encode("utf-8")) > 100_000
-        ):
-            raise GenerationError("Модель вернула пустой или слишком большой файл.")
-        if token_type == "docker_config" and not isinstance(json.loads(content), dict):
-            raise GenerationError("Модель вернула некорректную конфигурацию реестра.")
-        if token_type in ("db_dump", "backup_archive"):
-            if (
-                "CREATE TABLE" not in content.upper()
-                or "INSERT INTO" not in content.upper()
-            ):
-                raise GenerationError("Ответ модели не содержит резервную копию SQL.")
-        return content.strip() + "\n"
-    except GenerationError:
-        raise
-    except requests.exceptions.Timeout as exc:
-        raise GenerationError(
-            "Модель не ответила вовремя. Выберите меньшую модель или увеличьте LLM_TIMEOUT_SECONDS."
-        ) from exc
-    except requests.exceptions.ConnectionError as exc:
-        raise GenerationError(
-            "Нет соединения с локальной Ollama. Проверьте сервис и OLLAMA_BASE_URL."
-        ) from exc
-    except Exception as exc:
-        raise GenerationError(
-            "Не удалось сгенерировать файл. Проверьте Ollama и OLLAMA_MODEL."
-        ) from exc
-
-
-def generate_file(token_type, mode=None):
+def generate_file(token_type, mode=None, description="", name="", filename=""):
     """Возвращает байты файла и источник: локальные ключи, шаблон или LLM."""
     if token_type not in TOKEN_TYPES:
         raise GenerationError("Неподдерживаемый тип приманки.")
@@ -160,13 +83,71 @@ def generate_file(token_type, mode=None):
     if token_type == "password":
         return ("backup_admin:" + secrets.token_urlsafe(18) + "\n").encode(), "local"
 
-    content = (
-        template_content(token_type) if mode == "template" else llm_content(token_type)
-    )
+    if mode == "template":
+        content = template_content(token_type)
+    else:
+        content = render_content(generate_content(token_type, description, name, filename))
     payload = encode_content(token_type, content)
     if len(payload) > 1_000_000:
         raise GenerationError("Размер файла превышает ограничение агента (1 МБ).")
     return payload, mode
+
+
+def sql_value(value):
+    """Кодирует значение дампа как литерал; текст модели никогда не становится SQL-командой."""
+    if value is None:
+        return "NULL"
+    if type(value) is bool:
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return "'" + value.replace("'", "''") + "'"
+
+
+def render_content(data):
+    """Собирает синтаксис формата самостоятельно, сохраняя сгенерированные моделью данные."""
+    if isinstance(data, DocumentContent):
+        return data
+    if isinstance(data, DatabaseContent):
+        parts = ["-- PostgreSQL database backup", "SET standard_conforming_strings = on;", "BEGIN;", ""]
+        for table in data.tables:
+            columns = [f'    "{column.name}" {column.type}' for column in table.columns]
+            parts.append(f'CREATE TABLE "{table.name}" (\n    "id" INTEGER PRIMARY KEY,\n' + ",\n".join(columns) + "\n);")
+            names = ', '.join(['"id"'] + [f'"{column.name}"' for column in table.columns])
+            rows = ["    (" + ", ".join(sql_value(cell) for cell in [index, *row]) + ")"
+                    for index, row in enumerate(table.rows, 1)]
+            parts.append(f'INSERT INTO "{table.name}" ({names}) VALUES\n' + ",\n".join(rows) + ";\n")
+        return "\n".join(parts) + "\nCOMMIT;\n"
+    if isinstance(data, EnvironmentContent):
+        # Кавычки защищают пробелы и '#'; конфигурация остаётся данными, а не shell-скриптом.
+        return "\n".join(item.key + "=" + json.dumps(item.value, ensure_ascii=False) for item in data.settings) + "\n"
+    if isinstance(data, RegistryContent):
+        auth = base64.b64encode(f"{data.username}:{data.password}".encode()).decode("ascii")
+        return json.dumps({"auths": {data.registry: {"auth": auth}}}, indent=2) + "\n"
+    if isinstance(data, HistoryContent):
+        return "\n".join(data.commands) + "\n"
+    if isinstance(data, LogContent):
+        lines = []
+        for entry in data.entries:
+            timestamp = datetime.fromisoformat(entry.timestamp).strftime("%d/%b/%Y:%H:%M:%S %z")
+            lines.append(f'{entry.ip} - - [{timestamp}] "{entry.method} {entry.path} HTTP/1.1" {entry.status} {entry.bytes}')
+        return "\n".join(lines) + "\n"
+    raise GenerationError("Модель вернула неподдерживаемую структуру файла.")
+
+
+def pdf_fonts():
+    """Регистрирует шрифт с кириллицей; он устанавливается при сборке сервиса."""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    with font_lock:
+        if "LureSans" not in pdfmetrics.getRegisteredFontNames():
+            directory = Path("/usr/share/fonts/truetype/dejavu")
+            if not (directory / "DejaVuSans.ttf").is_file():
+                raise GenerationError("Не найден шрифт PDF. Пересоберите honeytoken_service.")
+            pdfmetrics.registerFont(TTFont("LureSans", str(directory / "DejaVuSans.ttf")))
+            pdfmetrics.registerFont(TTFont("LureSans-Bold", str(directory / "DejaVuSans-Bold.ttf")))
+            pdfmetrics.registerFontFamily("LureSans", normal="LureSans", bold="LureSans-Bold")
 
 
 def encode_content(token_type, content):
@@ -184,27 +165,48 @@ def encode_content(token_type, content):
         from docx import Document
 
         document = Document()
-        for line in content.splitlines():
-            document.add_paragraph(line)
+        if isinstance(content, DocumentContent):
+            document.core_properties.title = content.title
+            document.add_heading(content.title, 0)
+            for section in content.sections:
+                document.add_heading(section.heading, 1)
+                for paragraph in section.text.split("\n"):
+                    if paragraph.strip():
+                        document.add_paragraph(paragraph.strip())
+        else:
+            for line in content.splitlines():
+                document.add_paragraph(line)
         buffer = io.BytesIO()
         document.save(buffer)
         return buffer.getvalue()
     if token_type == "pdf":
         from html import escape
 
-        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
         buffer = io.BytesIO()
+        pdf_fonts()
         styles = getSampleStyleSheet()
+        body = ParagraphStyle("RussianBody", parent=styles["BodyText"], fontName="LureSans", fontSize=11, leading=16, spaceAfter=9)
+        title = ParagraphStyle("RussianTitle", parent=body, fontName="LureSans-Bold", fontSize=18, leading=24, spaceAfter=18)
+        heading = ParagraphStyle("RussianHeading", parent=body, fontName="LureSans-Bold", fontSize=13, leading=18, spaceBefore=10)
         paragraphs = []
-        for line in content.splitlines():
-            if line.strip():
-                paragraphs.extend(
-                    [Paragraph(escape(line), styles["BodyText"]), Spacer(1, 8)]
-                )
-        SimpleDocTemplate(buffer).build(paragraphs)
+        if isinstance(content, DocumentContent):
+            paragraphs.append(Paragraph(escape(content.title), title))
+            for section in content.sections:
+                paragraphs.append(Paragraph(escape(section.heading), heading))
+                paragraphs.append(Paragraph(escape(section.text).replace("\n", "<br/>"), body))
+            document_title = content.title
+        else:
+            for line in content.splitlines():
+                if line.strip():
+                    paragraphs.extend([Paragraph(escape(line), body), Spacer(1, 8)])
+            document_title = "Рабочие заметки"
+        SimpleDocTemplate(buffer, title=document_title, author="", leftMargin=48, rightMargin=48).build(paragraphs)
         return buffer.getvalue()
+    if isinstance(content, DocumentContent):
+        content = content.title + "\n\n" + "\n\n".join(section.heading + "\n" + section.text for section in content.sections) + "\n"
     return content.encode("utf-8")
 
 
@@ -240,6 +242,3 @@ def template_content(token_type):
         token_type,
         f"Operations backup notes\n\nBackup endpoint: https://backup.example.com\nAccount: backup_admin\nRecovery password: {password}\n",
     )
-
-
-"""Форматы файловых приманок, шаблоны и генерация через локальную Ollama."""

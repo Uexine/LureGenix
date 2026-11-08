@@ -17,6 +17,7 @@ FIELD_NAMES = {
     "node_path": "каталог",
     "target_kind": "тип пути",
     "generation_mode": "режим генерации",
+    "content_prompt": "описание содержимого",
     "ids": "выбранные события",
     "clear_all": "очистка журнала",
     "subnet": "подсеть",

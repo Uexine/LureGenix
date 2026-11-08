@@ -77,7 +77,10 @@
         });
         document.getElementById("tokensFilterSearch").addEventListener("input", applyTokensFilter);
         document.getElementById("tokensFilterType").addEventListener("change", applyTokensFilter);
-        document.getElementById("generationMode").addEventListener("change", loadGenerationStatus);
+        document.getElementById("generationMode").addEventListener("change", function () {
+            updateGenerationControls();
+            loadGenerationStatus();
+        });
         document.getElementById("typeSelect").addEventListener("change", updateGenerationControls);
         document.getElementById("selectAllEvents").addEventListener("change", function () {
             visibleEventIds.forEach(id => this.checked ? selectedEventIds.add(id) : selectedEventIds.delete(id));
@@ -175,6 +178,19 @@
     function updateGenerationControls() {
         const local = ["ssh_key", "api_key", "password"].includes(document.getElementById("typeSelect").value);
         document.getElementById("generationMode").disabled = local;
+        document.getElementById("contentPrompt").disabled = local || document.getElementById("generationMode").value !== "llm";
+        const examples = {
+            db_dump: "База CRM отдела продаж: две таблицы клиентов и сделок, по три строки. Названия компаний, суммы, даты и статусы. Без пользователей и паролей.",
+            backup_archive: "Резервная копия базы склада: товары и поставки, артикулы, количества, цены и даты. По три строки в каждой таблице.",
+            env_file: "Настройки production-приложения интернет-магазина: PostgreSQL, Redis, почта и вымышленные пароли.",
+            bash_history: "История обслуживания интернет-магазина в /var/www/shop: просмотр журналов и создание резервной копии PostgreSQL.",
+            log_file: "Журнал интернет-магазина: запросы к каталогу, корзине и панели администратора, успешные ответы и ошибки 404.",
+            docker_config: "Доступ учётной записи сборки release_bot к закрытому реестру registry.example.com.",
+            pdf: "Квартальный отчёт отдела продаж за III квартал 2026 года: выручка, расходы, итоги и план следующего квартала.",
+            docx: "План закупки серверного оборудования: бюджет, сроки поставок, ответственные сотрудники и этапы приёмки.",
+            txt: "Заметки администратора по резервному копированию PostgreSQL: расписание, каталог архивов и порядок восстановления.",
+        };
+        document.getElementById("contentPrompt").placeholder = examples[document.getElementById("typeSelect").value] || "Опишите содержимое файла и желаемый язык.";
         if (local) document.getElementById("generatorStatus").textContent = "Генератор: локальный";
         else renderGenerationStatus();
     }
@@ -185,7 +201,7 @@
         var label = document.getElementById("generatorStatus");
         const llm = document.getElementById("generationMode").value === "llm";
         label.textContent = !llm ? "Генератор: шаблоны" : !generationStatus ? "LLM: проверка" :
-            "LLM: " + generationStatus.model + (generationStatus.llm_ready ? " · готова" : " · недоступна");
+            "LLM: " + generationStatus.model + (generationStatus.warning ? " · " + generationStatus.warning : generationStatus.llm_ready ? " · модель установлена" : " · недоступна");
     }
 
     // Обновляет доступность локальной модели без запуска её скачивания.
@@ -575,6 +591,7 @@
         var nodePath = (document.getElementById("tokenNodePath") ? document.getElementById("tokenNodePath").value || "" : "").trim();
         var auto = document.getElementById("deploymentMode").value === "auto";
         var filename = document.getElementById("tokenFilename").value.trim();
+        var description = document.getElementById("contentPrompt").value.trim();
         if (btn.disabled) return;
         if (!nodeId) {
             showNotification("Нет зарегистрированного Linux-агента", "error");
@@ -587,6 +604,7 @@
         btn.disabled = true;
         btn.innerHTML = "<i class=\"fas fa-spinner fa-spin\"></i> Генерация...";
         var payload = { node_id: nodeId, type: type, name: name, filename: filename, target_kind: "directory", generation_mode: document.getElementById("generationMode").value };
+        if (!document.getElementById("contentPrompt").disabled) payload.content_prompt = description;
         if (!auto) payload.node_path = nodePath;
         var res = await apiPost("generate", payload);
         btn.disabled = false;

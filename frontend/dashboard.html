@@ -137,6 +137,11 @@
                     </select>
                 </div>
                 <div class="form-group form-group-full">
+                    <label for="contentPrompt">Что должно быть внутри файла</label>
+                    <textarea id="contentPrompt" rows="4" maxlength="1500" aria-describedby="contentPromptHelp" disabled placeholder="Например: квартальный отчёт отдела продаж за III квартал 2026 года: выручка, расходы, итоги и план следующего квартала."></textarea>
+                    <small id="contentPromptHelp">Описание применяется в режиме LLM. Название и имя файла также передаются модели. Используйте только вымышленные данные.</small>
+                </div>
+                <div class="form-group form-group-full">
                     <label for="deploymentMode">Размещение</label>
                     <select id="deploymentMode">
                         <option value="manual">Выбранный каталог</option>

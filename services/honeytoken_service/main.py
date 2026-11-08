@@ -43,6 +43,7 @@ class GenerateRequest(BaseModel):
     node_path: str = Field(default="", max_length=4096)
     target_kind: Literal["directory", "file"] = "directory"
     generation_mode: Literal["template", "llm"] | None = None
+    content_prompt: str = Field(default="", max_length=1500)
 
 
 class DeploymentResult(BaseModel):
@@ -137,9 +138,12 @@ def generate(data: GenerateRequest):
                 409, "Для этой старой ноды не зарегистрирован Linux-агент."
             )
     try:
-        payload, source = generate_file(token_type, mode=data.generation_mode)
+        payload, source = generate_file(
+            token_type, mode=data.generation_mode, description=data.content_prompt,
+            name=data.name, filename=posixpath.basename(target) if data.target_kind == "file" else filename,
+        )
     except GenerationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     intended_path = requested_path(target, filename, data.target_kind)
     placement = f"node:{data.node_id}, path:{intended_path or 'auto'}, name:{data.name}, status:pending"

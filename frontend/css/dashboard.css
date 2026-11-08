@@ -58,9 +58,14 @@ a { color:inherit; text-decoration:none; }
 .stat-number { color:var(--ink); font-size:28px; line-height:1.15; font-weight:730; letter-spacing:0; }
 .section-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 11px; }
 .section-header h2 { margin:0; color:var(--ink); font-size:19px; font-weight:700; letter-spacing:0; }
+#generatorStatus { max-width:60%; color:var(--muted); font-size:13px; line-height:1.4; text-align:right; overflow-wrap:anywhere; }
 .create-token-form { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px 14px; padding:19px; border:1px solid var(--line); border-radius:12px; background:var(--surface); box-shadow:var(--shadow); }
 .form-group { display:flex; min-width:0; flex-direction:column; gap:6px; }
 .form-group label { color:var(--text); font-size:14px; font-weight:650; }
+.form-group textarea { width:100%; min-height:110px; resize:vertical; padding:11px; border:1px solid var(--line-strong); border-radius:7px; background:var(--field); color:var(--ink); font:inherit; line-height:1.5; }
+.form-group textarea:focus { outline:none; border-color:var(--focus-border); box-shadow:0 0 0 3px var(--focus-ring); }
+.form-group textarea:disabled { opacity:.55; cursor:not-allowed; }
+.form-group small { color:var(--muted); font-size:13px; line-height:1.4; }
 .form-group input,.form-group select,.filter-input,.filter-select { width:100%; min-width:0; height:44px; padding:0 11px; border:1px solid var(--line-strong); border-radius:7px; outline:none; background:var(--field); color:var(--ink); font-size:15px; transition:var(--transition); }
 .form-group input::placeholder,.filter-input::placeholder { color:var(--placeholder); }
 .form-group input:hover,.form-group select:hover,.filter-input:hover,.filter-select:hover { border-color:var(--primary-border); background:var(--surface); }
